@@ -1,0 +1,24 @@
+[% META title = 'Persons' %]
+
+[% person = s.get_node(cgi.param('r_person')) %]
+
+<h2>
+  [% person.get_objects_list(s.get_node("${NS_L}/Property#first_name")).0.value %]
+  [% person.get_objects_list(s.get_node("${NS_L}/Property#last_name")).0.value %]
+</h2>
+
+<dl>
+[% FOREACH prop = person.get_props_list %]
+  <dt>[% prop.desig %]</dt>
+  <dd>
+    <ol>
+    [% FOREACH obj = person.get_objects_list(prop) %]
+      <li>[% obj.desig %]</li>
+    [% END %]
+    </ol>
+  </dd>
+[% END %]
+</dl>
+
+<p><a href="$me">Menu</a></p>
+

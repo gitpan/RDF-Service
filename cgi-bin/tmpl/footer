@@ -1,0 +1,6 @@
+
+<input type=hidden name=handler value="$template.next_handler">
+<input type=hidden name=previous value="$handler">
+<input type=hidden name=action value="">
+</form>
+</body></html>

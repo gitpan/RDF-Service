@@ -1,0 +1,33 @@
+#  $Id $  -*-perl-*-
+
+### This is code from an earlier RDF prototype. This has nothing to do
+### with the present Wraf RDF::Service module
+
+package rdf_handler;
+use strict;
+use CGI;
+use IO::Socket;
+use Storable qw( freeze );
+
+sub handler
+{
+    my $r = shift;
+
+    my $q = new CGI;
+    my $sock = new IO::Socket::INET (
+				     PeerAddr => 'localhost',
+				     PeerPort => '7788',
+				     Proto => 'tcp',
+				     );
+    die "Could not create socket: $!\n" unless $sock;
+
+    print $sock freeze $q;
+    print $sock "\x00";
+
+    while( $_ = <$sock> )
+    {
+	$r->print( $_ );
+    }
+}
+
+1;

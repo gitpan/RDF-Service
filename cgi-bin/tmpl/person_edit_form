@@ -1,0 +1,25 @@
+[% META title = 'Edit person' %]
+
+[% person = s.get_node(cgi.param('r_person')) %]
+
+<table>
+  <tr>
+    <td>First name</td>
+    <td><input name="r_fn"
+           value="[% person.get_objects_list(
+                     s.get_node("${NS_L}/Property#first_name")
+                                             ).0.value %]">
+    </td>
+  </tr>
+  <tr>
+    <td>Last name</td>
+    <td><input name="r_ln"
+           value="[% person.get_objects_list(
+                     s.get_node("${NS_L}/Property#last_name")
+                                             ).0.value %]">
+    </td>
+  </tr>
+</table>
+
+<input type="hidden" name="r_person" value="$person.uri">
+<input type="button" OnClick="go('menu','person_edit')" value=" Edit  ">

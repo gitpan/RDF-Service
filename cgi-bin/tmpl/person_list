@@ -1,0 +1,25 @@
+[% META title = 'Persons' %]
+
+[% persons = s.get_node("${NS_L}/Class#Person").objects_list %]
+
+<table>
+[% FOREACH person = persons %]
+  <tr>
+    <td>[% person.get_objects_list(s.get_node("${NS_L}/Property#first_name")).0.value %]
+    <td>[% person.get_objects_list(s.get_node("${NS_L}/Property#last_name")).0.value %]
+    <td><input type="button" 
+               OnClick="f.r_person.value='$person.uri';go('person_view')"
+               value=" View ">
+    <td><input type="button"
+               OnClick="f.r_person.value='$person.uri';go('person_edit_form')"
+               value=" Edit ">
+    <td><input type="button"
+               OnClick="f.r_person.value='$person.uri';go('person_list', 'person_delete')"
+	       value=" Delete ">
+  </tr> 
+[% END %]
+</table>
+
+<p><a href="$me">Menu</a></p>
+
+<input type="hidden" name="r_person">

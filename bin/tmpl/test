@@ -1,4 +1,4 @@
-[% subj = s.get_node("${NS_L}#S1") %]
+[% subj = s.get_node("${NS_LD}#S1") %]
 
 <h1>And here is [% subj.desig %]</h1>
 

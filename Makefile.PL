@@ -8,7 +8,8 @@ WriteMakefile(
 	      'NAME'	=> 'RDF::Service',
 	      'PMLIBDIRS'    => [ 'lib' ],
  	      'VERSION_FROM' => 'lib/RDF/Service.pm', # finds $VERSION
-#	      'EXE_FILES'    => [ 'cgi-bin/person.cgi' ],
+	      'EXE_FILES'    => [ 'cgi-bin/client.cgi',
+				  'cgi-bin/tail.cgi', 'bin/serv1.pl'  ],
  	      'PREREQ_PM'     =>
 	      {
 		  'DBI'          => 0,
@@ -16,6 +17,9 @@ WriteMakefile(
 		  'Time::HiRes'  => 0,
 		  'Template'     => 2,
 		  'CGI'          => 0,
+		  'IO::Socket'   => 1.18,
+		  'Data::Dumper' => 0,
+		  'FreezeThaw'   => 0,
 	      },
 	      'dist'          =>
 	      {

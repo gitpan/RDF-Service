@@ -1,4 +1,4 @@
-#  $Id: Dispatcher.pm,v 1.15 2000/10/21 12:59:48 aigan Exp $  -*-perl-*-
+#  $Id: Dispatcher.pm,v 1.19 2000/11/10 18:41:37 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Dispatcher;
 
@@ -33,34 +33,51 @@ sub go
 {
     my( $self, $call, @args ) = @_;
 
-    my $uri = $self->[NODE][URISTR] or
+    my $node = $self->[NODE];
+
+#    ref $node->[MODEL] eq 'RDF::Service::Context'
+#      or confess "Bad model ($node->[MODEL])";
+    my $uri = $node->[URISTR] or
       confess "Call to $call from anonymous obj";
 
     # Todo: optimize for common case
     #
-    if( not defined $self->[NODE][JUMPTABLE] )
+    if( not defined $node->[JUMPTABLE] )
     {
-	# Select a jumptable
+	debug_start( "select_jumptable", ' ', $self );
 
-	my $prefix_key = $self->[NODE][IDS].'/'.$self->[NODE]->find_prefix_id;
+	my $prefix_key = $node->[IDS].'/'.$node->find_prefix_id;
 
-	unless( defined $self->[NODE][TYPES] )
+	unless( $node->[TYPE_ALL] )
 	{
 	    # Create a temporary JUMPTABLE in order to call the
 	    # init_types() function in the correct interfaces
 
-	    # Set the first type: Resource. It will not be bound to
-	    # any interface explicitly. But is implicitly bound to the
-	    # Base interface.
+	    # Set the first type: Resource
+	    # TODO: Determine the model for this type statement
 	    #
-	    $self->[NODE][TYPES][0] = $self->get( NS_RDFS.'Resource' );
+	    my $c_resource = $self->get( NS_RDFS.'Resource' )
+	      or die "Oh no!!!";
+	    my $model_node_id = $self->[WMODEL][NODE][ID]
+	      or do
+	      {
+		  warn "Oh no!!\n";
+		  warn "While dispatching $call\n";
+		  warn "  for $self->[NODE][URISTR]\n";
+		  warn "WMODEL: $self->[WMODEL]\n";
+		  warn "Mnode: $self->[WMODEL][NODE]\n";
+		  warn "$self->[WMODEL][NODE][ID]\n";
+		  confess;
+	      };
+	    $node->[TYPE]{$c_resource->[NODE][ID]}{$model_node_id}=1;
+#	    $self->[NODE][TYPES][0] = $self->get( NS_RDFS.'Resource' );
 
 	    if(not defined $JumpJumpTable{$prefix_key})
 	    {
 		# Create the jumptable
 		&create_jumptable($self, $prefix_key);
 	    }
-	    $self->[NODE][JUMPTABLE] = $JumpJumpTable{$prefix_key};
+	    $node->[JUMPTABLE] = $JumpJumpTable{$prefix_key};
 
 	    # This will call go() the second time.  This time with the
 	    # temporary JUMPTABLE.  Since JUMPTABLE is defined, this
@@ -71,15 +88,22 @@ sub go
 
 
 	    &go($self, 'init_types');
-	    die "No types found for $self->[NODE][URISTR]\n "
-		unless defined $self->[NODE][TYPES][0];
+
+	    # There will allways be at least one type for a node
+#	    die "No types found for $node->[URISTR]\n "
+#		unless defined $node->[TYPE][0];
 	}
 
 	if( $DEBUG > 1 )
 	{
 	    debug "D Types for $uri:\n";
-	    foreach my $type ( @{$self->[NODE][TYPES]} )
+	    # This lists all types not thinking about what their
+	    # models are
+	    foreach my $type_id ( keys %{$node->[TYPE]} )
 	    {
+		my $type = $self->get_node_by_id( $type_id );
+		# TODO: Check that at least one node declared this
+		# type
 		debug "..$type->[NODE][ID] : $type->[NODE][URISTR]\n";
 	    }
 	    debug "\n";
@@ -88,7 +112,7 @@ sub go
 	# Defines the TYPES list
 	#
 	my $key = $prefix_key.'/'.join('-', map $_->[NODE][ID],
-				       @{$self->[NODE][TYPES]});
+				       @{$self->type_orderd_list});
 	debug "Jumptable for $uri is defined to $key\n", 2;
 
 	if(not defined $JumpJumpTable{$key})
@@ -97,8 +121,10 @@ sub go
 	    &create_jumptable($self, $key);
 	}
 
-	$self->[NODE][JUMPTABLE] = $JumpJumpTable{$key};
-	$self->[NODE][JTK] = $key;
+	$node->[JUMPTABLE] = $JumpJumpTable{$key};
+	$node->[JTK] = $key;
+
+	debug_end("select_jumptable");
     }
 
 
@@ -106,7 +132,7 @@ sub go
     ### Dispatch to the handling interfaces
     ###
 
-    if( defined(my $coderef = $self->[NODE][JUMPTABLE]{$call}) )
+    if( defined(my $coderef = $node->[JUMPTABLE]{$call}) )
     {
 	# TODO: If call not found: treat this as a property and maby
 	# as an dynamic property
@@ -191,16 +217,17 @@ sub go
 #    warn " Dumping info for $self\n";
 #    warn $self->to_string;
 
-    my @types = map "\t".$_->uri."\n", @{$self->[NODE][TYPES]};
-    $self->[NODE][JTK] ||= "--no JTK--";
+    my $types_str = $self->types_as_string;
+    $node->[JTK] ||= "--no JTK--";
     die("\nNo function named '$call' defined for $uri ".
-	  "($self->[NODE][JTK])\n@types\n");
+	  "($node->[JTK])\n$types_str\n");
 }
 
 sub create_jumptable
 {
     my( $self, $key ) = @_;
 
+    my $node = $self->[NODE];
     my $entry = {};
 
     # TODO: Make filters part of signature.  Especially model and
@@ -212,21 +239,29 @@ sub create_jumptable
     # Remember if the codref already has been added for the function
     my %func_count;
 
-    debug "Constructing $key jumptable\n", 2;
+    debug_start( "create_jumptable", ' ', $self );
+
+    if( $DEBUG )
+    {
+	unless( $node->[IDS] )
+	{
+	    die "No IDS found for $node->[URISTR]\n";
+	}
+    }
 
     # Iterate through every interface and type.
-    foreach my $interface ( @{interfaces( $self->[NODE][IDS] )} )
+    foreach my $interface ( @{interfaces( $node->[IDS] )} )
     {
 	debug "..I ".$interface->[URISTR]."\n", 2;
 	foreach my $domain ( sort {length($b) <=> length($a)}
 			     keys %{$interface->[MODULE_REG]} )
 	{
-	    next if $self->[NODE][URISTR] !~ /^\Q$domain/;
+	    next if $node->[URISTR] !~ /^\Q$domain/;
 
 	    debug "....D $domain\n", 2;
 
 	    my $domain_reg = $interface->[MODULE_REG]{$domain};
-	    foreach my $type ( @{$self->[NODE][TYPES]} )
+	    foreach my $type ( @{$self->type_orderd_list} )
 	    {
 #		warn "checking $type->[URISTR]...\n";
 		if( defined( my $jt = $domain_reg->{ $type->[NODE][URISTR]} ))
@@ -247,6 +282,8 @@ sub create_jumptable
 	    }
 	}
     }
+
+    debug_end( "create_jumptable" );
 
     # Insert the jumptable in shared memory
     $JumpJumpTable{$key}=$entry;

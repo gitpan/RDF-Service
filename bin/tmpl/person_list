@@ -1,13 +1,13 @@
 [% META title = 'Persons' %]
 
-[% persons = s.get("${NS_L}/Class#Person").rev_type.list %]
+[% persons = s.get("${NS_LD}/Class#Person").rev_type.list %]
 
 <table>
 [% FOREACH person = persons %]
   <tr>
     [% TRY %]
-      <td>[% person.arc_obj("${NS_L}/Property#first_name").li.value %]
-      <td>[% person.arc_obj("${NS_L}/Property#last_name").li.value %]
+      <td>[% person.arc_obj("${NS_LD}/Property#first_name").li.value %]
+      <td>[% person.arc_obj("${NS_LD}/Property#last_name").li.value %]
     [% CATCH %]
       [% CLEAR %]
       <td colspan="2">Bad person: $error.info
@@ -32,3 +32,5 @@
 <p><a href="$me">Menu</a></p>
 
 <input type="hidden" name="r_person">
+
+

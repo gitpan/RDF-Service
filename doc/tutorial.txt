@@ -1,4 +1,4 @@
-#  $Id: tutorial.txt,v 1.1 2000/10/22 11:07:31 aigan Exp $  -*-perl-*-
+#  $Id: tutorial.txt,v 1.2 2000/10/30 01:41:05 aigan Exp $  -*-perl-*-
 
 # This file is created to be an example of the existing functions
 
@@ -18,7 +18,7 @@ use RDF::Service;
 
 # Constants used
 #
-use RDF::Service::Constants qw( NS_L );
+use RDF::Service::Constants qw( NS_LD );
 
 
 
@@ -39,14 +39,14 @@ use RDF::Service::Constants qw( NS_L );
 # Our $s is a resouce object representing our *connection* to the
 # RDF::Service server.  That's why I call it a session resource.
 
-our $s = new RDF::Service( NS_L."/session/S1" );
+our $s = new RDF::Service( NS_LD."/session/S1" );
 
 # The URI will be diffrent between diffrent clients and times.  A
 # continued session should use the same session URI.  The parameter to
 # the constructor holds our session URI.
 #
 # The URI string used as parameter for the constructor are here
-# constructed by concatenating the constant NS_L with a string.  NS_L
+# constructed by concatenating the constant NS_LD with a string.  NS_LD
 # stands for "Namespace local" and is here the namespace owned by the
 # running instance ot the RDF::Service server.
 #
@@ -116,7 +116,7 @@ our $db = $s->connect("RDF::Service::Interface::DBI::V01",
 # And now create a model in which our statements will be placed.  (The
 # session statements is placed in a server meta-model.)
 
-my $model = $s->get_model(NS_L.'/model/M1');
+my $model = $s->get_model(NS_LD.'/model/M1');
 
 # get_model() is a combination of a couple of other methods.  It will
 # find the resource with the specified URI.  If that resource is not a
@@ -131,7 +131,7 @@ my $model = $s->get_model(NS_L.'/model/M1');
 
 # Define a new class.  $c_person stands for "the class named Person".
 
-my $c_person = $s->get(NS_L.'/Class/Person')->set($model, [NS_RDFS,'Class']);
+my $c_person = $s->get(NS_LD.'/Class/Person')->set($model, [NS_RDFS,'Class']);
 
 # get() retrieves the existing resource.  If non can be find, it
 # creates a new one.  On the other hand; find() will fail no arc
@@ -159,8 +159,8 @@ my $c_person = $s->get(NS_L.'/Class/Person')->set($model, [NS_RDFS,'Class']);
 
 $s->get()->set($model, [$c_person],
 	     {
-		 NS_L.'/Property/first_name' => ["Jonas"],
-		 NS_L.'/Property/last_name'  => ["Liljegren"],
+		 NS_LD.'/Property/first_name' => ["Jonas"],
+		 NS_LD.'/Property/last_name'  => ["Liljegren"],
 	     }
 	    );
 
@@ -197,7 +197,7 @@ my @persons = $c_person->rev_type->list;
 
 # Get the first name of the first person.
 
-my $first_name = $persons[0]->arc_obj(NS_L.'/Property/first_name')->li;
+my $first_name = $persons[0]->arc_obj(NS_LD.'/Property/first_name')->li;
 print ${ $first_name->value };
 
 # arc_obj($pred) is a shorthand for arc($pred)->obj() which in turn is

@@ -1,4 +1,4 @@
-[% META title = 'Welcome to Wraf DB' %]
+[% META title = 'Menu' %]
 
 <ul>
  <li><a href="javascript:go('person_add_form')">Add Person</a>

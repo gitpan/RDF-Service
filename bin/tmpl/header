@@ -3,7 +3,7 @@
 [% INCLUDE js %]
 </HEAD><BODY>
 
-<h1>$template.title</h1>
+<h1>Wraf 0.03: $template.title</h1>
 
 [% view_result %]
 

@@ -1,4 +1,4 @@
-#  $Id: Context.pm,v 1.5 2000/10/22 10:59:00 aigan Exp $  -*-perl-*-
+#  $Id: Context.pm,v 1.12 2000/11/12 23:25:34 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Context;
 
@@ -25,25 +25,33 @@ use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( interfaces uri2id list_prefixes
 			    get_unique_id id2uri debug
 			    debug_start debug_end
-			    $DEBUG );
+			    $DEBUG expire );
 use Data::Dumper;
-use Carp;
+use Carp qw( confess cluck croak);
 
 sub new
 {
-    my( $class, $node, $context, $wmodel ) = @_;
+    my( $proto, $node, $context, $wmodel ) = @_;
 
     # This constructor shouls only be called from get_node, which
     # could be called from find_node or create_node.
 
+    my $class = ref($proto) || $proto;
     my $self = bless [], $class;
+
+    if( ref($proto) )
+    {
+	$context ||= $proto->[CONTEXT];
+	$node    ||= $proto->[NODE]; # The same node in another context?
+	$wmodel  ||= $proto->[WMODEL];
+    }
 
     # TODO: Maby perform a deep copy of the context.  At least copy
     # each key-value pair.
 
-    $self->[CONTEXT] = $context;
-    $self->[NODE]    = $node;
-    $self->[WMODEL]  = $wmodel;
+    $self->[NODE]    = $node or die;
+    $self->[CONTEXT] = $context or die "No context supplied";
+    $self->[WMODEL]  = $wmodel or debug "No WMODEL supplied by $proto\n";
 
     return $self;
 }
@@ -73,10 +81,19 @@ sub uri
     $_[0]->[NODE][URISTR];
 }
 
+sub model
+{
+    my( $self ) = @_;
+    die "not implemented";
+
+    # TODO: Should return a selection of models
+
+}
+
 
 sub get
 {
-    $_[1] ||= NS_L."#".&get_unique_id;
+    $_[1] ||= NS_LD."#".&get_unique_id;
     return get_node_by_id( $_[0], uri2id($_[1]) );
 }
 
@@ -86,7 +103,7 @@ sub get_node_by_id
 
     # TODO: First look for the object in the cache
 
-    die "IDS undefined" unless defined $self->[NODE][IDS];
+    confess "IDS undefined" unless defined $self->[NODE][IDS];
     my $obj = $RDF::Service::Cache::node->{$self->[NODE][IDS]}{ $id };
 
     unless( $obj )
@@ -94,17 +111,26 @@ sub get_node_by_id
 	# Create an uninitialized object. Any request for the objects
 	# properties will initialize the object with the interfaces.
 
-	$obj = RDF::Service::Resource->new_by_id($self->[NODE], $id);
+	$obj = $self->[NODE]->new_by_id($id);
 	$obj->init_private();
 
 	$RDF::Service::Cache::node->{$self->[NODE][IDS]}{ $id } = $obj;
     }
     else
     {
-	debug "Got URI from cache!!!\n", 2;
+	debug "Got URI from cache!!!\n", 3;
     }
 
-    debug "get_node( $obj->[URISTR] )\n", 2;
+    debug "get_node( $obj->[URISTR] )\n", 3;
+
+    if( $DEBUG )
+    {
+	unless( $self->[WMODEL] or
+		  $obj->[URISTR] eq NS_LD.'#The_Base_Model' )
+	{
+	    confess "No WMODEL found for $self->[NODE][URISTR] ";
+	}
+    }
 
     return RDF::Service::Context->new( $obj,
 				       $self->[CONTEXT],
@@ -123,16 +149,19 @@ sub get_model
     {
 	debug "Model existing: $uri\n", 1;
 	# Is this a model?
-	unless( $obj->is_a(NS_L.'#Model') )
+	unless( $obj->is_a(NS_LS.'#Model') )
 	{
-	    debug "$obj->[URISTR] is not a model\n", 1;
+	    debug "$obj->[NODE][URISTR] is not a model\n", 1;
 	    debug $obj->types_as_string, 1;
-	    exit;
+	    die;
 	}
+	# setting WMODEL
+	$obj->[WMODEL] = $obj;
     }
     else
     {
 	debug "Model not existing. Creating it: $uri\n", 1;
+	# create_model sets WMODEL
 	$obj = $self->create_model( $uri );
     }
 
@@ -146,7 +175,7 @@ sub is_a
 
     $class = $self->get( $class ) unless ref $class;
 
-    $self->[NODE][TYPES] or $self->init_types;
+    $self->[NODE][TYPE_ALL] or $self->init_types;
     if( defined $self->[NODE][TYPE]{$class->[NODE][ID]} )
     {
 	return 1;
@@ -157,11 +186,62 @@ sub is_a
     }
 }
 
+sub type_orderd_list
+{
+    my( $self, $i, $point ) = @_;
+
+    # TODO:  This should (as all the other methods) be cached and
+    # dpendencies registred.
+
+    die "Not implemented" if $point;
+    my $node = $self->[NODE];
+
+
+    # We can't call level() for the resources used to define level()
+    #
+    if( $node->[URISTR] =~ /^(@{[NS_RDF]}|@{[NS_RDFS]}|@{[NS_LS]})/o )
+    {
+	my $type_uri_ref = $Schema->{$self->[NODE][URISTR]}{NS_RDF.'type'};
+
+	return( [$self->get( $$type_uri_ref ),
+		 $self->get(NS_RDFS.'Resource')] );
+    }
+
+    debug_start("type_orderd_list", ' ', $self);
+
+
+#  Do we have to have all types to list the *present* defined types?
+#    $node->[TYPE_ALL] or $self->init_types;
+
+    my @types = ();
+    my %included; # Keep track of included types
+    foreach my $type ( sort { $b->level <=> $a->level }
+			 map $self->get_node_by_id($_),
+		       keys %{$node->[TYPE]}
+		      )
+    {
+	# Check that at least one model defines the type.  Can we
+	# assume that the existence of the type (in the hash tree)
+	# implies the existence of at least one model (in the hash
+	# treee) and that the existence of a model implies that that
+	# model has the value 1, meaning that the model states the
+	# type?  Yes. Assume that.
+
+	push @types, $type unless $included{$type->[NODE][ID]};
+	$included{$type->[NODE][ID]}++;
+    }
+
+    debug_end("type_orderd_list");
+    return( \@types );
+}
+
+
 
 # The alternative selectors:
 #
 #   arc               subj arcs
 #   arc_obj           subj arcs objs
+#   arc_obj_list      subj arcs objs list
 #   select_arc        container subj arcs
 #   select_arc_obj    container subj arcs objs
 #   type              subj types
@@ -185,16 +265,17 @@ sub type
 
     debug_start("type", ' ', $self);
 
-    $self->[NODE][TYPE] or $self->init_types;
+    $self->[NODE][TYPE_ALL] or $self->init_types;
 
     # TODO: Insert the query in the selection, rather than the query
     # result
 
-    my $selection = $self->declare_selection( [$self->[NODE][TYPES]] );
+    my $selection = $self->declare_selection( $self->type_orderd_list );
 
     debug_end("rev_type");
     return( $selection );
 }
+
 
 sub rev_type
 {
@@ -204,12 +285,12 @@ sub rev_type
 
     debug_start("rev_type", ' ', $self);
 
-    $self->[NODE][REV_TYPE] or $self->init_rev_types;
+    $self->[NODE][REV_TYPE_ALL] or $self->init_rev_types;
 
     # TODO: Insert the query in the selection, rather than the query
     # result
 
-    my $subjs = [];
+    my %subjs = ();
     foreach my $subj_id ( keys %{$self->[NODE][REV_TYPE]} )
     {
 	# This includes types from all models
@@ -217,13 +298,12 @@ sub rev_type
 	{
 	    if( $self->[NODE][REV_TYPE]{$subj_id}{$model_id} )
 	    {
-		my $subj = $self->get_node_by_id( $subj_id );
-		push @$subjs, $subj;
+		$subjs{$subj_id} = $self->get_node_by_id( $subj_id );
 	    }
 	}
     }
 
-    my $selection = $self->declare_selection( $subjs );
+    my $selection = $self->declare_selection( [values %subjs] );
 
     debug_end("rev_type");
     return( $selection );
@@ -238,15 +318,20 @@ sub arc
 
     if( not defined $point )
     {
-	$self->init_props() unless defined $self->[NODE][PROPS];
+	# TODO: allow partially initialized props
+
+	$self->init_rev_subjs() unless defined $self->[NODE][REV_SUBJ_ALL];
 
 	# TODO: Insert the query in the selection, rather than the
 	# query result
 	#
 	my $arcs = [];
-	foreach my $pred_id ( keys %{$self->[NODE][PROPS]} )
+	foreach my $pred_id ( keys %{$self->[NODE][REV_SUBJ]} )
 	{
-	    push @$arcs, @{$self->[NODE][PROPS]{$pred_id}};
+	    foreach my $arc_node ( @{$self->[NODE][REV_SUBJ]{$pred_id}} )
+	    {
+		push @$arcs, $self->new($arc_node);
+	    }
 	}
 	my $selection = $self->declare_selection( $arcs );
 
@@ -281,18 +366,18 @@ sub arc_subj
     #
     if( ref $point eq 'RDF::Service::Context' ) # property
     {
-	$self->init_rev_props( $point ) unless defined
-	  $self->[NODE][REV_PROPS]{$point->[NODE][ID]};
+	$self->init_rev_objs( $point ) unless defined
+	  $self->[NODE][REV_OBJ]{$point->[NODE][ID]};
 
 	# TODO: Insert the query in the selection, rather than the
 	# query result
 	#
 	my $subjs = [];
-	foreach my $arc (
-	      @{$self->[NODE][REV_PROPS]{$point->[NODE][ID]}}
+	foreach my $arc_node (
+	      @{$self->[NODE][REV_OBJ]{$point->[NODE][ID]}}
 	     )
 	{
-	    push @$subjs, $arc->subj;
+	    push @$subjs, $self->new( $arc_node )->subj;
 	}
 	my $selection = $self->declare_selection( $subjs );
 
@@ -314,13 +399,13 @@ sub arc_pred
 
     if( not defined $point )
     {
-	$self->init_props() unless defined $self->[NODE][PROPS];
+	$self->init_rev_subjs() unless defined $self->[NODE][REV_SUBJ_ALL];
 
 	# TODO: Insert the query in the selection, rather than the
 	# query result
 	#
 	my $preds = [];
-	foreach my $pred_id ( keys %{$self->[NODE][PROPS]} )
+	foreach my $pred_id ( keys %{$self->[NODE][REV_SUBJ]} )
 	{
 	    push @$preds, $self->get_node_by_id($pred_id);
 	}
@@ -358,23 +443,69 @@ sub arc_obj
     #
     if( ref $point eq 'RDF::Service::Context' ) # property
     {
-	$self->init_props( $point ) unless defined
-	  $self->[NODE][PROPS]{$point->[NODE][ID]};
+	$self->init_rev_subjs( $point ) unless defined
+	  $self->[NODE][REV_SUBJ]{$point->[NODE][ID]};
 
 	# TODO: Insert the query in the selection, rather than the
 	# query result
 	#
 	my $objs = [];
-	foreach my $arc (
-	      @{$self->[NODE][PROPS]{$point->[NODE][ID]}}
+	foreach my $arc_node (
+	      @{$self->[NODE][REV_SUBJ]{$point->[NODE][ID]}}
 	     )
 	{
-	    push @$objs, $arc->obj;
+	    push @$objs, $self->new( $arc_node )->obj;
 	}
 	my $selection = $self->declare_selection( $objs );
 
 	debug_end("arc_obj");
 	return $selection;
+    }
+    else
+    {
+	die "not implemented";
+    }
+    die "What???";
+}
+
+sub arc_obj_list
+{
+    my( $self, $point ) = @_;
+
+    # Default $point to be a property resource
+    #
+    unless( ref $point )
+    {
+	unless( defined $point )
+	{
+	    die "Not implemented";
+	}
+	$point = $self->get( $point );
+    }
+
+    debug_start( "arc_obj", ' ', $self );
+    debug "   ( $point->[NODE][URISTR] )\n", 1;
+
+    # Take action depending on $point
+    #
+    if( ref $point eq 'RDF::Service::Context' ) # property
+    {
+	$self->init_rev_subjs( $point ) unless defined
+	  $self->[NODE][REV_SUBJ]{$point->[NODE][ID]};
+
+	# TODO: Insert the query in the selection, rather than the
+	# query result
+	#
+	my $objs = [];
+	foreach my $arc_node (
+	      @{$self->[NODE][REV_SUBJ]{$point->[NODE][ID]}}
+	     )
+	{
+	    push @$objs, $self->new( $arc_node )->obj;
+	}
+
+	debug_end("arc_obj");
+	return $objs;
     }
     else
     {
@@ -409,14 +540,15 @@ sub selector
 
 sub set
 {
-    my( $self, $model, $types, $props ) = @_;
+    my( $self, $types, $props ) = @_;
 
-    # This is practicaly the same as declare_self, except that the
-    # changes doesn't get stored
+    # This is practicaly the same as declare_self.  set() updates the
+    # data in the interfaces.
 
     debug_start("set", ' ', $self);
 
-    die "No model supplied" unless $model->[NODE][URISTR];
+    my $node = $self->[NODE];
+    my $model = $self->[WMODEL];
 
     # Should each type and property only be saved in the first best
     # interface and not saved in the following interfaces?  Yes!
@@ -428,13 +560,13 @@ sub set
 
   SET_TYPES:
   {
-      $self->[NODE][TYPES] or $self->init_types;
+      $node->[TYPE_ALL] or $self->init_types;
 
       my @add_types;
       my %del_types;
-      foreach my $type ( @{$self->[NODE][TYPES]} )
+      foreach my $type ( @{$self->type_orderd_list} )
       {
-	  if( $self->[NODE][TYPE]{$type->[NODE][ID]}{$model->[NODE][ID]} )
+	  if( $node->[TYPE]{$type->[NODE][ID]}{$model->[NODE][ID]} )
 	  {
 	      $del_types{$type->[NODE][ID]} = $type;
 	  }
@@ -456,21 +588,21 @@ sub set
       if( @add_types )
       {
 	  # Will only add each type in one interface
-	  $self->declare_add_types( $model, [@add_types] );
-	  $self->store_types( $model, [@add_types] );
+	  $self->declare_add_types( [@add_types] );
+	  $self->store_types( [@add_types] );
       }
       if( %del_types )
       {
 	  # Will delete types from all interfaces
-	  $self->declare_del_types( $model, [values %del_types] );
-	  $self->remove_types( $model, [values %del_types] );
+	  $self->declare_del_types( [values %del_types] );
+	  $self->remove_types( [values %del_types] );
       }
   }
 
 
   SET_PROPS:
   {
-      $self->[NODE][PROPS] or $self->init_props;
+      $node->[REV_SUBJ_ALL] or $self->init_rev_subjs;
 
       my %add_props;
       my %del_props;
@@ -518,10 +650,10 @@ sub set
 	  {
 	      foreach my $obj ( @{ $add_props{$pred} } )
 	      {
-		  $self->declare_add_prop( $pred, $obj, $model );
+		  $self->declare_add_prop( $pred, $obj );
 	      }
 	  }
-	  $self->store_props( $model, {%add_props} );
+	  $self->store_props( [ keys %add_props ] );
       }
       if( %del_props )
       {
@@ -530,7 +662,7 @@ sub set
 	  {
 	      foreach my $obj_id ( keys %{ $del_props{$pred_id} } )
 	      {
-		  $del_props{$pred_id}{$obj_id}->delete_node( $model );
+		  $del_props{$pred_id}{$obj_id}->delete_node();
 	      }
 	  }
       }
@@ -542,13 +674,14 @@ sub set
 
 sub set_literal
 {
-    my( $self, $model, $lit_str_ref ) = @_;
+    my( $self, $lit_str_ref ) = @_;
 
     debug_start("set_literal", ' ', $self);
     debug "   ($$lit_str_ref)\n", 1;
 
-    $self->declare_literal( $model, $self, $lit_str_ref );
-    $self->update_node( $model );
+    $self->declare_literal( $lit_str_ref, $self,  );
+    warn "***** ${$self->[NODE][VALUE]} *****\n";
+    $self->update_node();
 
     debug_end("set_literal");
 }
@@ -559,7 +692,9 @@ sub types_as_string
     my( $self ) = @_;
     #
 #   die $self->uri."--::".Dumper($self->[TYPES]);
-    return join '', map "..".$_->[NODE][URISTR]."\n", @{$self->[NODE][TYPES]};
+    return join '', map "t ".$_->[NODE][URISTR]."\n",
+      map $self->get_node_by_id($_),
+	keys %{$self->[NODE][TYPE]};
 }
 
 
@@ -567,14 +702,12 @@ sub to_string
 {
     my( $self ) = @_;
 
+    # Old!
+
     my $str = "";
     no strict 'refs';
 
-    {
-	my @urilist = map( $_->[NODE][URISTR], @{ $self->[NODE][TYPES] });
-	$str.="TYPES\t: @urilist\n";
-    }
-
+    $str.="TYPES\t: ". $self->types_as_string ."\n";
 
     foreach my $attrib (qw( IDS URISTR ID NAME LABEL VALUE FACT PREFIX MODULE_NAME ))
     {
@@ -631,38 +764,190 @@ sub list
 
 ######################################################################
 #
-# Declaration methods should only be called from interfaces.  Since
-# they are 'low_level', they should not accept uri's in place of
-# objects, etc.
+# Declaration methods should only be called from interfaces.
 #
 
-sub declare_delete_arc
+sub declare_del_node
 {
-    my( $self, $i ) = @_;
+    my( $self ) = @_;
 
-    debug_start("declare_delete_arc", ' ', $self);
+    debug_start("declare_del_node", ' ', $self);
 
-    # TODO: remove the dependent dynamic props
+    # Only deletes the part of the node associated with the WMODEL
 
-    if( my $pred = $self->[NODE][PRED] )
+    if( $DEBUG )
     {
-	my $subj = $self->[NODE][SUBJ];
-	my $props = $self->[NODE][PROPS]{$pred->[NODE][ID]};
-	for( my $i=0; $i<= $#$props; $i++ )
+	unless( ref $self eq 'RDF::Service::Context' )
 	{
-	    if( $props->[$i][NODE][URISTR] eq $self->[NODE][URISTR] )
-	    {
-		splice( @$props, $i, 1 );
-		$i--; # A entry was removed. Compensate
-	    }
+	    confess "Self $self not Context";
 	}
     }
-    debug_end("declare_delete_arc");
+
+
+    my $node = $self->[NODE];
+    my $wmodel = $self->[WMODEL];
+    my $wmodel_id = $wmodel->[NODE][ID];
+
+    delete $self->[MODEL]{$wmodel_id};
+
+    $self->declare_del_types;
+    $self->declare_del_rev_types;
+
+    for(my $j=0; $j<= $#{$node->[REV_PRED]}; $j++)
+    {
+	# This model does not longer define the arc.  Remove the
+	# property unless another model also defines the arc.
+
+	my $arc_node = $node->[REV_PRED][$j];
+	next unless delete $arc_node->[MODEL]{$wmodel_id};
+	splice @{$node->[REV_PRED]}, $j--, 1
+	  unless keys %{$arc_node->[MODEL]};
+
+	$self->new($arc_node)->declare_del_node;
+    }
+
+    foreach my $subj_id ( keys %{$node->[REV_SUBJ]} )
+    {
+	for(my $j=0; $j<= $#{$node->[REV_SUBJ]{$subj_id}}; $j++ )
+	{
+	    # This model does not longer define the arc.  Remove the
+	    # property unless another model also defines the arc.
+
+	    my $arc_node = $node->[REV_SUBJ]{$subj_id}[$j];
+	    next unless delete $arc_node->[MODEL]{$wmodel_id};
+	    splice @{$node->[REV_SUBJ]{$subj_id}}, $j--, 1
+	      unless keys %{$arc_node->[MODEL]};
+
+	    $self->new($arc_node)->declare_del_node;
+	}
+	delete $node->[REV_SUBJ]{$subj_id}
+	  unless @{$node->[REV_SUBJ]{$subj_id}};
+    }
+
+    foreach my $obj_id ( keys %{$node->[REV_OBJ]} )
+    {
+	for(my $j=0; $j<= $#{$node->[REV_OBJ]{$obj_id}}; $j++ )
+	{
+	    # This model does not longer define the arc.  Remove the
+	    # property unless another model also defines the arc.
+
+	    my $arc_node = $node->[REV_OBJ]{$obj_id}[$j];
+	    next unless delete $arc_node->[MODEL]{$wmodel_id};
+	    splice @{$node->[REV_OBJ]{$obj_id}}, $j--, 1
+	      unless keys %{$arc_node->[MODEL]};
+
+	    $self->new($arc_node)->declare_del_node;
+	}
+	delete $node->[REV_OBJ]{$obj_id}
+	  unless @{$node->[REV_OBJ]{$obj_id}};
+    }
+
+    # Should we delete the whole node?
+    #
+    if( keys %{$self->[MODEL]} ) # Has another model defined this node?
+    {
+	# TODO: Something to do here?
+    }
+    else
+    {
+	# Is this a statement?
+	if( $node->[PRED] )
+	{
+	    # Expire all dependent lists
+	    $node->[PRED][NODE][REV_PRED] = undef;
+	    $node->[PRED][NODE][REV_PRED_ALL] = undef;
+	    $node->[SUBJ][NODE][REV_SUBJ] = undef;
+	    $node->[SUBJ][NODE][REV_SUBJ_ALL] = undef;
+	    $node->[OBJ][NODE][REV_OBJ] = undef;
+	    $node->[OBJ][NODE][REV_OBJ_ALL] = undef;
+	}
+
+	$node = undef;
+    }
+
+    debug_end("declare_del_node");
+}
+
+sub declare_del_types
+{
+    my( $self, $types ) = @_;
+
+    debug_start("declare_del_types", ' ', $self);
+
+    my $node_type = $self->[NODE][TYPE];
+    my $model_id = $self->[WMODEL][NODE][ID];
+    my $id = $self->[NODE][ID];
+
+    my @ids = ();
+    if( defined $types )
+    {
+	@ids = map $_->[NODE][ID], @$types;
+    }
+    else
+    {
+	@ids = keys %$node_type;
+    }
+
+    foreach my $type_id ( @ids )
+    {
+	next unless delete $node_type->{$type_id}{$model_id};
+
+	my $class_rev_type =
+	  $self->get_node_by_id($type_id)->[NODE][REV_TYPE];
+
+	delete $class_rev_type->{$id}{$model_id};
+
+	unless( keys %{$node_type->{$type_id}} )
+	{
+	    delete $node_type->{$type_id};
+	    delete $class_rev_type->{$id};
+	}
+    }
+
+    debug_end("declare_del_types");
+}
+
+sub declare_del_rev_types
+{
+    my( $self, $res ) = @_;
+
+    debug_start("declare_del_rev_types", ' ', $self);
+
+    my $class_rev_type = $self->[NODE][REV_TYPE];
+    my $model_id = $self->[WMODEL][NODE][ID];
+    my $id = $self->[NODE][ID];
+
+    my @ids = ();
+    if( defined $res )
+    {
+	@ids = map $_->[NODE][ID], @$res;
+    }
+    else
+    {
+	@ids = keys %$class_rev_type;
+    }
+
+    foreach my $res_id ( @ids )
+    {
+	next unless delete $class_rev_type->{$res_id}{$model_id};
+
+	my $type = $self->get_node_by_id($res_id)->[NODE][TYPE];
+
+	delete $type->{$id}{$model_id};
+
+	unless( keys %{$class_rev_type->{$res_id}} )
+	{
+	    delete $class_rev_type->{$res_id};
+	    delete $type->{$id};
+	}
+    }
+
+    debug_end("declare_del_rev_types");
 }
 
 sub declare_literal
 {
-    my( $self, $model, $lit, $lit_str_ref, $types, $props ) = @_;
+    my( $self, $lit_str_ref, $lit, $types, $props, $model ) = @_;
     #
     # - $model is a resource object
     # - $lit (uri or node or undef)
@@ -672,16 +957,13 @@ sub declare_literal
 
     # $types and $props is not done yet
 
-    ref $model eq 'RDF::Service::Context'
-      or croak "Bad model";
-
     # $lit can be node or uristr
     #
     unless( ref $lit )
     {
 	unless( defined $lit )
 	{
-	    $lit = $self->[NODE][URISTR].'#'.&get_unique_id;
+	    $lit = NS_LD."/literal/". &get_unique_id;
 	}
 	$lit = $self->get( $lit );
     }
@@ -694,12 +976,12 @@ sub declare_literal
 
     # TODO: Set value as property if value differ among models
 
+    $model ||= $self->[WMODEL];
     $lit->[NODE][VALUE]     = $lit_str_ref;
     $lit->[NODE][MODEL]{$model->[NODE][ID]} = $model;
 
-    $types ||= [];
-    push @$types, NS_RDFS.'Literal', NS_RDFS.'Resource';
-    $lit->declare_add_types( $model, $types );
+
+    $lit->declare_self( [NS_RDFS.'Literal', NS_RDFS.'Resource']);
 
     debug_end("declare_literal");
     return $lit;
@@ -713,7 +995,13 @@ sub declare_selection
     debug_start("declare_selection", ' ', $self);
     if( $DEBUG )
     {
-	my @con_uristr = map $_->[NODE][URISTR], @$content;
+	confess unless ref $content;
+	my @con_uristr = ();
+	foreach my $res ( @$content )
+	{
+	    confess "$res no Resource" unless ref $res and ref $res->[NODE];
+	    push @con_uristr, $res->[NODE][URISTR];
+	}
 	debug "   ( @con_uristr )\n";
     }
 
@@ -725,7 +1013,7 @@ sub declare_selection
     {
 	unless( defined $selection )
 	{
-	    $selection = $self->[NODE][URISTR].'/'.&get_unique_id;
+	    $selection = NS_LD.'/selection/'.&get_unique_id;
 	}
 	$selection = $self->get( $selection );
     }
@@ -736,9 +1024,7 @@ sub declare_selection
     $selnode->[MODEL]{$model->[NODE][ID]} = $model;
     $selnode->[CONTENT] = $content;
 
-    $selection->declare_add_types( $model, [
-	  NS_L.'#Selection',
-	 ]);
+    $selection->declare_add_types( [NS_LS.'#Selection'] );
 
     debug_end("declare_selection");
     return $selection;
@@ -746,23 +1032,22 @@ sub declare_selection
 
 sub declare_model
 {
-    my( $self, $model, $obj, $content ) = @_;
+    my( $self, $obj, $content ) = @_;
 
-    $model or die "model must be defined";
     $content ||= [];
 
     unless( ref $obj )
     {
 	unless( defined $obj )
 	{
-	    $obj = $self->[NODE][URISTR].'/'.&get_unique_id;
+	    $obj = NS_LD."/model/".&get_unique_id;
 	}
 	$obj = $self->get( $obj );
     }
 
     debug_start("declare_model", ' ', $self );
 
-    my $objnode = $obj->[NODE];
+    my $obj_node = $obj->[NODE];
 
     # The model consists of triples. The [content] holds the access
     # points for the parts of the model. Each element can be either a
@@ -776,18 +1061,18 @@ sub declare_model
 
     # Just handle one model ??
     #
-    $objnode->[MODEL]{$model->[NODE][ID]} = $model;
-    $objnode->[FACT]     = 1; # DEPRECATED
-    $objnode->[NS]       = $objnode->[URISTR];
-    $objnode->[CONTENT]  = $content;
-    $objnode->[READONLY] = 0;
-    $objnode->[UPDATED]  = time;
+    $obj_node->[MODEL]{$obj->[WMODEL][NODE][ID]} = $self->[WMODEL];
+    $obj_node->[FACT]     = 1; # DEPRECATED
+    $obj_node->[NS]       = $obj_node->[URISTR];
+    $obj_node->[CONTENT]  = $content;
+    $obj_node->[READONLY] = 0;
+    $obj_node->[UPDATED]  = time;
+    $obj->[WMODEL] = $obj;
 
-    $obj->declare_add_types( $model, [
-	  NS_L.'#Model',
+    $obj->declare_self( [
+	  NS_LS.'#Model',
 	  NS_RDFS.'Resource',
 	 ]);
-
 
     debug_end("declare_model");
     return $obj;
@@ -795,21 +1080,22 @@ sub declare_model
 
 sub declare_node
 {
-    my( $self, $model, $uri, $types, $props );
+    my( $self, $uri, $types, $props );
 
     die "Not done";
 }
 
 sub declare_self
 {
-    my( $self, $model, $types, $props ) = @_;
+    my( $self, $types, $props ) = @_;
 
-    # This is practicaly the same as set, except that the
-    # changes is stored in the handling interface
+    # This is practicaly the same as set.  declare_self does not store
+    # the changes in the interfaces
 
     debug_start("declare_self", ' ', $self );
 
-    die "No model supplied" unless $model->[NODE][URISTR];
+    my $node = $self->[NODE];
+    my $model = $self->[WMODEL];
 
     # Should each type and property only be saved in the first best
     # interface and not saved in the following interfaces?  Yes!
@@ -821,16 +1107,16 @@ sub declare_self
 
   SET_TYPES:
   {
-      $self->[NODE][TYPES] or $self->init_types;
+      $node->[TYPE_ALL] or $self->init_types;
 
       my @add_types;
       my %del_types;
 
       # Look up all types previous added by $model
       #
-      foreach my $type ( @{$self->[NODE][TYPES]} )
+      foreach my $type ( @{$self->type_orderd_list} )
       {
-	  if( $self->[NODE][TYPE]{$type->[NODE][ID]}{$model->[NODE][ID]} )
+	  if( $node->[TYPE]{$type->[NODE][ID]}{$model->[NODE][ID]} )
 	  {
 	      $del_types{$type->[NODE][ID]} = $type;
 	  }
@@ -841,6 +1127,8 @@ sub declare_self
       #
       foreach my $type ( @$types )
       {
+	  $type = $self->get( $type ) unless ref $type;
+
 	  if( $del_types{ $type->[NODE][ID] } )
 	  {
 	      delete $del_types{ $type->[NODE][ID] };
@@ -856,7 +1144,7 @@ sub declare_self
       if( @add_types )
       {
 	  # Will only add each type in one interface
-	  $self->declare_add_types( $model, [@add_types] );
+	  $self->declare_add_types( [@add_types] );
       }
 
       # Remove the old types
@@ -864,14 +1152,13 @@ sub declare_self
       if( %del_types )
       {
 	  # Will delete types from all interfaces
-	  $self->declare_del_types( $model, [values %del_types] );
+	  $self->declare_del_types( [values %del_types] );
       }
   }
 
-
   SET_PROPS:
   {
-      $self->[NODE][PROPS] or $self->init_props;
+      $node->[REV_SUBJ_ALL] or $self->init_rev_subjs;
 
       my %add_props;
       my %del_props;
@@ -913,7 +1200,7 @@ sub declare_self
 	  {
 	      foreach my $obj ( @{ $add_props{$pred} } )
 	      {
-		  $self->declare_add_prop( $pred, $obj, $model );
+		  $self->declare_add_prop( $pred, $obj );
 	      }
 	  }
       }
@@ -924,7 +1211,7 @@ sub declare_self
 	  {
 	      foreach my $obj_id ( keys %{ $del_props{$pred_id} } )
 	      {
-		  $del_props{$pred_id}{$obj_id}->declare_delete_arc;
+		  $del_props{$pred_id}{$obj_id}->declare_del_node;
 	      }
 	  }
       }
@@ -936,76 +1223,77 @@ sub declare_self
 
 sub declare_add_types
 {
-    my( $self, $model, $types ) = @_;
+    my( $self, $types ) = @_;
 
     debug_start("declare_add_types", ' ', $self );
 
     # TODO: Should it be model instead of types?
 
-    # TODO: type(Resource) should be added even if not specified
+    # TODO: type(Resource) should be added by base init_types
 
     # The types will be listed in order from the most specific to the
     # most general. rdfs:Resource will allways be last.  Insert
     # implicit items according to subClassOf.
 
     my $node = $self->[NODE];
+    my $model = $self->[WMODEL];
 
-    croak "types must be a list ref" unless ref $types;
-    croak "Bad model" unless ref $model eq "RDF::Service::Context";
+    if( $DEBUG )
+    {
+	croak "types must be a list ref" unless ref $types;
+	croak "Bad model" unless
+	  ref $model eq "RDF::Service::Context";
+    }
 
-    $node->[TYPE] ||= {};
-    $node->[TYPES] ||= [];
-
-    my $subClassOf = $self->get(NS_RDFS.'subClassOf');
-
+    my $model_node_id = $model->[NODE][ID];
     foreach my $type ( @$types )
     {
+	# This should update the $types listref
+	#
 	$type = $self->get( $type ) unless ref $type;
-	my $type_node = $type->[NODE];
+	debug("    T $type->[NODE][URISTR]\n", 2);
 
-	debug "   T $type_node->[URISTR]\n", 1;
-
-	# We wan't to remember what model says what.
+	# Duplicate types in the same model will merge
 	#
-	$node->[TYPE]{$type_node->[ID]}{$model->[NODE][ID]} = 1;
-
-	# NB!!! Special handling of some basic classes  in order to
-	# avoid cyclic dependencies
-	#
-	next if $type_node->[URISTR] eq NS_RDFS.'Literal';
-	next if $type_node->[URISTR] eq NS_RDFS.'Class';
-	next if $type_node->[URISTR] eq NS_RDFS.'Resource';
-	next if $type_node->[URISTR] eq NS_RDF.'Statement';
-	next if $type_node->[URISTR] eq NS_L.'#Model';
-	next if $type_node->[URISTR] eq NS_L.'#Selection';
-
-	# The class init_props creates implicit subClassOf for
-	# second and nth stage super classes.  We only have to iterate
-	# through the class subClassOf.
-	#
-	foreach my $sc ( @{$type->arc_obj(NS_RDFS.'subClassOf')->list} )
-	{
-	    $node->[TYPE]{$sc->[NODE]->[ID]}{$model->[NODE][ID]} = 1;
-
-	    # These types are dependent on the subClasOf statements
-
-	    # TODO: Add dependency
-	}
+	$node->[TYPE]{$type->[NODE][ID]}{$model_node_id} = 1;
+	$type->[NODE][REV_TYPE]{$node->[ID]}{$model_node_id} = 1;
     }
 
 
-    # Make sure to always return the types in the same
-    # order.
+    # TODO: Separate the dynamic types to a separate init_types
 
-    # Create the new complete list
-    push @$types, @{$node->[TYPES]};
-    $node->[TYPES] = [];
-    my %included; # Keep track of included types
+
+
+    # TODO: Maby place in separate method
+
+    # Add the implicit types for $node.  This is done in a second loop
+    # in order to resolv cyclic dependencies.
+    # TODO: Check that this generates the right result.
+    #
+    my $subClassOf = $self->get(NS_RDFS.'subClassOf');
     foreach my $type ( @$types )
-#    foreach my $type ( sort { $a->level <=> $b->level } @$types )
     {
-	push @{$node->[TYPES]}, $type unless $included{$type->[NODE][ID]};
-	$included{$type->[NODE][ID]}++;
+ 	# NB!!! Special handling of some basic classes  in order to
+ 	# avoid cyclic dependencies
+ 	#
+	my $type_node = $type->[NODE];
+ 	next if $type_node->[URISTR] eq NS_RDFS.'Literal';
+ 	next if $type_node->[URISTR] eq NS_RDFS.'Class';
+ 	next if $type_node->[URISTR] eq NS_RDFS.'Resource';
+ 	next if $type_node->[URISTR] eq NS_RDF.'Statement';
+ 	next if $type_node->[URISTR] eq NS_LS.'#Selection';
+
+
+ 	# The class init_rev_subjs creates implicit subClassOf for
+ 	# second and nth stage super classes.  We only have to iterate
+ 	# through the subClassOf properties of the type.
+ 	#
+ 	foreach my $sc ( @{$type->arc_obj_list(NS_RDFS.'subClassOf')} )
+ 	{
+ 	    $node->[TYPE]{$sc->[NODE][ID]}{$model->[NODE][ID]} = 1;
+ 	    # These types are dependent on the subClasOf statements
+ 	    # TODO: Add dependency
+ 	}
     }
 
     # The jumptable must be redone now!
@@ -1023,11 +1311,17 @@ sub declare_add_types
 
 sub declare_add_rev_types
 {
-    my( $self, $model, $rev_types ) = @_;
+    my( $self, $rev_types ) = @_;
 
     debug_start("declare_add_rev_types", ' ', $self );
 
+    # NOTE:  We can't merge with declare_add_types().  Since we want
+    # to have a complete list of types, we would have to initialize in
+    # both directions. If you declare somthing to be of type Person,
+    # you would have to initialize rev_type for Person.
+
     my $node = $self->[NODE];
+    my $model = $self->[WMODEL];
 
     croak "rev_types must be a list ref" unless ref $rev_types;
     croak "Bad model" unless ref $model eq "RDF::Service::Context";
@@ -1054,10 +1348,10 @@ sub declare_add_rev_types
 
 	# I addition to all resources with type $self, we have to
 	# include the implicit types.  If a class is a subClasOf $self,
-	# we have to add all resources of that type.  init_rev_props()
+	# we have to add all resources of that type.  init_rev_objs()
 	# in the RDFS interface should have added the implicit
 	# subClassOf for us. But those implicit subClassOf isn't
-	# exactly necessary since the subClass rev_types willinclude
+	# exactly necessary since the subClass rev_types will include
 	# sub-sub classes.
 	#
 	debug "..Finding implicit rev_types\n", 1;
@@ -1096,7 +1390,7 @@ sub declare_add_rev_types
 
 sub declare_add_static_literal
 {
-    my( $subj, $pred, $lit_str, $model, $arc_uristr ) = @_;
+    my( $subj, $pred, $lit_str, $arc_uristr ) = @_;
     #
     # $lit_str is a scalar ref
     #
@@ -1119,7 +1413,7 @@ sub declare_add_static_literal
 
 sub declare_add_dynamic_literal
 {
-    my( $subj, $pred, $lit_str_ref, $model, $lit_uristr, $arc_uristr  ) = @_;
+    my( $subj, $pred, $lit_str_ref, $lit_uristr, $arc_uristr, $model ) = @_;
     #
     # $lit_str is a scalar ref
     #
@@ -1131,18 +1425,24 @@ sub declare_add_dynamic_literal
     debug_start("declare_add_dynamic_literal", ' ', $subj );
 
     croak "Invalid subj" unless ref $subj;
-    croak "No subj model" unless ref $subj->[MODEL];
+    croak "No subj model" unless ref $subj->[NODE][MODEL];
 
-    $pred = $subj->[MODEL]->get( $pred ) unless ref $pred;
+    $pred = $subj->get( $pred ) unless ref $pred;
+    $model ||= $subj->[WMODEL];
 
-    $arc_uristr ||= $model->[NODE][URISTR].'#'.get_unique_id();
+    $arc_uristr ||= NS_LD."/literal/".get_unique_id();
 
     # TODO: This is a implicit object. It's URI should be based on the
     # subject URI
     #
-    my $lit = $model->declare_literal( $model, $lit_uristr, $lit_str_ref );
+    my $lit = $subj->declare_literal( $lit_str_ref,
+				      $lit_uristr,
+				      undef,
+				      undef,
+				      $model,
+				     );
 
-    my $arc = $model->declare_arc( $model, $arc_uristr, $pred, $subj, $lit );
+    my $arc = $subj->declare_add_prop( $pred, $lit, $arc_uristr, $model );
 
     debug_end("declare_add_dynamic_literal");
     return $arc;
@@ -1150,22 +1450,23 @@ sub declare_add_dynamic_literal
 
 sub declare_add_prop
 {
-    my( $subj, $pred, $obj, $model, $arc_uristr ) = @_;
+    my( $subj, $pred, $obj, $arc_uristr, $model ) = @_;
 
-    $arc_uristr ||= $model->[NODE][URISTR].'#'.get_unique_id();
+    $model ||= $subj->[WMODEL];
 
-    my $arc = $model->declare_arc( $model,
-				   $arc_uristr,
-				   $pred,
-				   $subj,
-				   $obj);
+    my $arc = $subj->declare_arc( $pred,
+				  $subj,
+				  $obj,
+				  $arc_uristr,
+				  $model,
+				 );
 
     return $arc;
 }
 
 sub declare_arc
 {
-    my( $self, $model, $uristr, $pred, $subj, $obj ) = @_;
+    my( $self, $pred, $subj, $obj, $uristr, $model ) = @_;
 
     # It *could* be that we have two diffrent arcs with the same URI,
     # if they comes from diffrent models.  The common case is that the
@@ -1177,46 +1478,81 @@ sub declare_arc
     # All models says the same thing unless the properties are
     # explicit.
 
+    # A defined [REV_SUBJ] only means that some props has been
+    # defined. It doesn't mean that ALL props has been defined.
+
+    # A existing prop key with an undef value means that we know that
+    # the prop doesn't exist.  But a look for a nonexisting prop sould
+    # (for now) trigger a complete initialization and set the complete
+    # key.
+
+    # The concept of "complete list" depends on other selection.
+    # Diffrent selections will have diffrent lists.  Every such
+    # selection will be saved separately from the [REV_SUBJ] list.
+    # It's existence guarantee that the list is complete.
 
     debug_start("declare_arc", ' ', $self);
 
-    if( $uristr )
+    if( $uristr )  # arc could be changed
     {
 	# TODO: Check that tha agent owns the namespace
 	# For now: Just allow models in the local namespace
-	my $ns_l = NS_L;
+	my $ns_l = NS_LD;
 	unless( $uristr =~ /$ns_l/ )
 	{
 	    confess "Invalid namespace for literal: $uristr";
 	}
     }
-    else
+    else  # The arc is created
     {
-	$uristr = NS_L."/arc/". &get_unique_id;
+	# Who will know anything about this arc?  There could be
+	# statements about it later, but not now.
+
+	$uristr = NS_LD."/arc/". &get_unique_id;
+
+	# TODO: Call a miniversion of add_types that knows that no other
+	# types has been added.  We should not require the setting of
+	# types and props to initialize itself. The initialization
+	# should be done here.
     }
 
+    # Prioritize submitted $model
+    #
+    $model ||= $self->[WMODEL];
+
+
     my $arc = $self->get( $uristr );
+    my $arc_node = $arc->[NODE];
+
+    $model or die "*** No WMODEL for arc $arc_node->[URISTR]\n";
+    $arc_node->[IDS] or die "*** No IDS for arc $arc_node->[URISTR]\n";
+
+
 
     $pred = $self->get($pred) unless ref $pred;
     $subj = $self->get($subj) unless ref $subj;
     $obj = $obj->get($obj) unless ref $obj;
-    $model = $obj->get($model) unless ref $model;
 
     debug "   P $pred->[NODE][URISTR]\n", 1;
     debug "   S $subj->[NODE][URISTR]\n", 1;
     debug "   O $obj->[NODE][URISTR]\n", 1;
+    debug "   M $model->[NODE][URISTR]\n", 1;
+    debug "   A $arc->[NODE][URISTR]\n", 1;
 
-    $arc->[NODE][PRED] = $pred;
-    $arc->[NODE][SUBJ] = $subj;
-    $arc->[NODE][OBJ]  = $obj;
-    $arc->[NODE][MODEL]{$model->[NODE][ID]} = $model;
+    $arc_node->[PRED] = $pred;
+    $arc_node->[SUBJ] = $subj;
+    $arc_node->[OBJ]  = $obj;
+    $arc_node->[MODEL]{$model->[NODE][ID]} = $model;
+
+    push @{ $subj->[NODE][REV_SUBJ]{$pred->[NODE][ID]} }, $arc_node;
+    push @{ $obj->[NODE][REV_OBJ]{$pred->[NODE][ID]} }, $arc_node;
 
 
-    $arc->declare_add_types( $model, [NS_RDF.'Statement', NS_RDFS.'Resource'] );
+    # TODO: declare_self should only be used if a existing arc is
+    # changed. New arc should not call declare_self since that forces
+    # an deep initialization of itself.
 
-    push @{ $subj->[NODE][PROPS]{$pred->[NODE][ID]} }, $arc;
-    push @{ $obj->[NODE][REV_PROPS]{$pred->[NODE][ID]} }, $arc;
-
+    $arc->declare_self( [NS_RDF.'Statement', NS_RDFS.'Resource'] );
 
     debug_end("declare_arc");
     return $arc;

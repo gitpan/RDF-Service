@@ -1,4 +1,4 @@
-#  $Id: Cache.pm,v 1.8 2000/10/21 12:59:48 aigan Exp $  -*-perl-*-
+#  $Id: Cache.pm,v 1.13 2000/11/10 18:41:37 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Cache;
 
@@ -22,10 +22,11 @@ use strict;
 use base 'Exporter';
 use vars qw( $uri2id $id2uri $ids @EXPORT_OK %EXPORT_TAGS $create_cnt
 	     $create_time $prefixlist $node %fc );
-use RDF::Service::Constants qw( :resource :interface :context );
+use RDF::Service::Constants qw( :resource :interface :context
+			      );
 use Carp;
 
-our $DEBUG = 1;
+our $DEBUG = 2;
 our $Level = 0;
 
 {
@@ -51,7 +52,7 @@ our $Level = 0;
     $create_time = 0;
 
     my @ALL = qw( uri2id id2uri generate_ids interfaces get_unique_id
-    list_prefixes debug $Level $DEBUG debug_start debug_end );
+    list_prefixes debug $Level $DEBUG debug_start debug_end expire );
     @EXPORT_OK = ( @ALL );
     %EXPORT_TAGS = ( 'all'        => [@ALL],
 		     );
@@ -74,7 +75,7 @@ sub debug_start
     my( $call, $no, $res ) = @_;
     return unless $DEBUG;
 
-    die "Recursive loop detected. Bailing out!\n" if $Level >= 15;
+    die "Recursive loop detected. Bailing out!\n" if $Level >= 30;
 
     $no = ' ' unless defined $no;
     $fc{$call}++;
@@ -96,8 +97,31 @@ sub debug_end
     warn $msg;
 }
 
+
+# sub expire
+# {
+#     my( $depends, $section, $entry ) = @_;
+
+#     # TODO: Use a second argument to expire more selectively
+
+#     for( my $j=0; $j <= $#{$depends->[DPROPS]}; $j++ )
+#     {
+# 	$depends->[DPROPS][$j][PROPS] = undef;
+# 	expire( $depends->[DPROPS][$j][DEPENDS] );
+#     }
+
+#     for( my $j=0; $j <= $#{$depends->[DREVPROPS]}; $j++ )
+#     {
+# 	$depends->[DREVPROPS][$j][REV_PROPS] = undef;
+# 	expire( $depends->[DREVPROPS][$j][DEPENDS] );
+#     }
+# }
+
+
 sub uri2id
-{
+{# TODO: Define constnats for the most common nodes
+
+
     # $_[0] is the uri. (How much faster is this?)
 
     confess unless defined $_[0];
@@ -169,7 +193,7 @@ sub list_prefixes
 
     debug "Creating a prefixlist for IDS $ids\n", 2;
 
-    return @{ $prefixlist->{$ids} ||= [sort {length($b) <=> length($a)} 
+    return @{ $prefixlist->{$ids} ||= [sort {length($b) <=> length($a)}
 				       map( keys %{$_->[MODULE_REG]},
 					    @{interfaces($ids)}),'' ] };
 }

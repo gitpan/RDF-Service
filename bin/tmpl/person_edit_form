@@ -6,13 +6,13 @@
   <tr>
     <td>First name</td>
     <td><input name="r_fn"
-           value="[% person.arc_obj("${NS_L}/Property#first_name").li.value %]">
+           value="[% person.arc_obj("${NS_LD}/Property#first_name").li.value %]">
     </td>
   </tr>
   <tr>
     <td>Last name</td>
     <td><input name="r_ln"
-           value="[% person.arc_obj("${NS_L}/Property#last_name").li.value %]">
+           value="[% person.arc_obj("${NS_LD}/Property#last_name").li.value %]">
     </td>
   </tr>
 </table>

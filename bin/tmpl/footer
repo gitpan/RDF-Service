@@ -3,4 +3,9 @@
 <input type=hidden name=previous value="$handler">
 <input type=hidden name=action value="">
 </form>
+
+[% rows = 4 + dlines() - offset %]
+<script language="javascript">
+parent.log.location.href="tail.cgi?$rows";
+</script>
 </body></html>

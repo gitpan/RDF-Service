@@ -1,4 +1,4 @@
-#  $Id: Resource.pm,v 1.15 2000/10/20 07:49:15 aigan Exp $  -*-perl-*-
+#  $Id: Resource.pm,v 1.19 2000/11/10 18:41:37 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Resource;
 
@@ -23,54 +23,78 @@ use strict;
 use RDF::Service::Dispatcher;
 use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( interfaces uri2id list_prefixes
-			    get_unique_id id2uri debug );
+			    get_unique_id id2uri debug $DEBUG );
 use Data::Dumper;
 use Carp qw( cluck confess croak carp );
 
 
 sub new_by_id
 {
-    my( $class, $parent, $id ) = @_;
-
-    # This constructor shouls only be called from get_node, which
-    # could be called from find_node or create_node.  get_node will
-    # first look in the cache for this resource.
-
-    my $self = bless [], $class;
-
-    if( $parent and (ref($parent) ne 'RDF::Service::Resource'))
-    {
-#	print "**",ref($parent),"**";
-	confess "Called Resource->new($class, $parent, $id)\n";
-    }
-
-    $self->[IDS] = $parent ? $parent->[IDS] : '';
-    $self->[URISTR] = id2uri($id) or die "No URI for $self";
-    $self->[ID] = $id;
-    $self->[JTK] = "--no value--";
-
-    return $self;
+    return new($_[0], undef, $_[1]);
 }
 
 sub new
 {
-    my( $class, $parent, $uri ) = @_;
+    my( $proto, $uri, $id ) = @_;
 
     # This constructor shouls only be called from get_node, which
     # could be called from find_node or create_node.  get_node will
     # first look in the cache for this resource.
 
+    my $class = ref($proto) || $proto;
     my $self = bless [], $class;
 
-    if( $parent and (ref($parent) ne 'RDF::Service::Context'))
+
+
+    $self->[IDS] = ''; # This should only be used in the bootstrap
+    # TODO: Use bootstrap mode for allow this
+
+    if( ref($proto) )
     {
-#	print "**",ref($parent),"**";
-	confess "Called Resource->new($class, $parent, $uri)\n";
+	if( $DEBUG )
+	{
+	    if( ref $proto ne 'RDF::Service::Resource')
+	    {
+		confess "The proto $proto is of wrong type";
+	    }
+	}
+
+	$self->[IDS] = $proto->[IDS];
     }
 
-    $self->[IDS] = $parent ? $parent->[NODE][IDS] : '';
-    $self->[URISTR] = $uri or die "No URI for $self";
-    $self->[ID] = uri2id( $self->[URISTR] );
+
+    if( $uri )
+    {
+	$self->[URISTR] = $uri or die "No URI for $self";
+	$self->[ID] = uri2id( $self->[URISTR] );
+    }
+    else
+    {
+	$self->[URISTR] = id2uri($id);
+	$self->[ID] = $id;
+    }
+    $self->[TYPE] = {};
+    $self->[TYPE_ALL] = undef;
+    $self->[REV_TYPE] = {};
+    $self->[REV_TYPE_ALL] = undef;
+    $self->[REV_PRED] = [];
+    $self->[REV_PRED_ALL] = undef;
+    $self->[REV_SUBJ] = {};
+    $self->[REV_SUBJ_ALL] = undef;
+    $self->[REV_OBJ] = {};
+    $self->[REV_OBJ_ALL] = undef;
+
+    $self->[JUMPTABLE] = undef;
+
+    $self->[NS] = undef;
+    $self->[NAME] = undef;
+    $self->[LABEL] = undef;
+
+    $self->[PRIVATE] = {};
+    $self->[MODEL] = {};
+
+    $self->[ALIASFOR] = undef;
+
     $self->[JTK] = "--no value--";
 
     return $self;
@@ -116,6 +140,7 @@ sub init_private
 	$self->[PRIVATE]{$interface->[ID]} ||= {};
     }
 }
+
 
 1;
 

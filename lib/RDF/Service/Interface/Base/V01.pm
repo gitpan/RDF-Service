@@ -1,4 +1,4 @@
-#  $Id: V01.pm,v 1.17 2000/10/22 10:59:00 aigan Exp $  -*-perl-*-
+#  $Id: V01.pm,v 1.22 2000/11/12 18:14:00 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Interface::Base::V01;
 
@@ -23,6 +23,7 @@ use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( generate_ids uri2id debug $DEBUG);
 use URI;
 use Data::Dumper;
+use Carp qw( confess carp cluck croak );
 
 sub register
 {
@@ -32,12 +33,12 @@ sub register
     {
 	'' =>
 	{
-	    NS_L.'#Service' =>
+	    NS_LS.'#Service' =>
 	    {
 		'connect' => [\&connect],
 		'find_node' => [\&find_node],
 	    },
-	    NS_L.'#Model' =>
+	    NS_LS.'#Model' =>
 	    {
 		'arcs_list' => [\&arcs_list],
 		'is_empty'  => [\&not_implemented],
@@ -69,17 +70,50 @@ sub register
 	    },
 	    NS_RDFS.'Class' =>
 	    {
+		'level' => [\&level],
+		'init_rev_subjs' => [\&init_rev_subjs_class],
 	    },
 	},
-	NS_L."/service/" =>
+	NS_LS."/service/" =>
 	{
 	    NS_RDFS.'Resource' =>
 	    {
 		'init_types' => [\&service_init_types],
 	    },
 	},
+	&NS_LS =>
+	{
+	    NS_RDFS.'Resource' =>
+	    {
+		'init_types' => [\&init_types],
+		'init_rev_subjs' => [\&init_rev_subjs],
+		'level'      => [\&base_level],
+	    },
+	},
+	&NS_RDF =>
+	{
+	    NS_RDFS.'Resource' =>
+	    {
+		'init_types' => [\&init_types],
+		'init_rev_subjs' => [\&init_rev_subjs],
+		'level'      => [\&base_level],
+	    },
+	},
+	&NS_RDFS =>
+	{
+	    NS_RDFS.'Resource' =>
+	    {
+		'init_types' => [\&init_types],
+		'init_rev_subjs' => [\&init_rev_subjs],
+		'level'      => [\&base_level],
+	    },
+	},
     };
 }
+
+
+
+# ??? Create literal URIs by apending '#val' to the statement URI
 
 sub not_implemented { die "not implemented" }
 
@@ -101,13 +135,13 @@ sub connect
     # Create the new interface resource object
     #
     my $uri = _construct_interface_uri( $module, $args );
-    my $nio = RDF::Service::Resource->new($self, $uri);
+    my $new_i_node = $self->[NODE]->new( $uri );
 
 
     # Update the Service object IDS
     #
-    push @{$self->[NODE][INTERFACES]}, $nio;
-    $self->[NODE][IDS] = $nio->[IDS] =
+    push @{$self->[NODE][INTERFACES]}, $new_i_node;
+    $self->[NODE][IDS] = $new_i_node->[IDS] =
       generate_ids($self->[NODE][INTERFACES]);
 
     # Initialize the cache for this IDS.  Each IDS has it's own cache
@@ -117,9 +151,9 @@ sub connect
 
     # Set up the new object, based on the IDS
     #
-    $nio->[MODEL] = $self->[NODE][MODEL];
-    $nio->[MODULE_NAME] = $module; # This is not used
-    $nio->init_private();
+    $new_i_node->[MODEL] = undef; # What is the model of this?
+    $new_i_node->[MODULE_NAME] = $module; # This is not used
+    $new_i_node->init_private();
 
 
     # Purge the existing Service jumptable, because of the changed IDS
@@ -145,16 +179,185 @@ sub connect
     debug "Registring $file\n", 1;
 
   {   no strict 'refs';
-      $nio->[MODULE_REG] = &{$module."::register"}( $nio, $args );
+      $new_i_node->[MODULE_REG] = &{$module."::register"}( $new_i_node, $args );
   }
 
-    my $ni = RDF::Service::Context->new($nio, $self->[CONTEXT], $self->[WMODEL]);
-    return( $ni, 1 );
+    my $new_i = RDF::Service::Context->new($new_i_node,
+					   $self->[CONTEXT],
+					   $self->[WMODEL]);
+    return( $new_i, 1 );
 }
+
+
+sub init_types
+{
+    my( $self, $i ) = @_;
+
+#    warn "***The model of $i is $i->[MODEL]\n";
+    croak "Bad interface( $i )" unless ref $i eq "RDF::Service::Resource";
+
+    if( my $entry = $Schema->{$self->[NODE][URISTR]}{NS_RDF.'type'} )
+    {
+	$self->declare_add_types( &_obj_list($self, $i, $entry) );
+	return( 1, 3);
+    }
+    $self->[NODE][TYPE_ALL] = 1;
+    return undef;
+}
+
+sub init_rev_subjs
+{
+    my( $self, $i) = @_;
+
+    my $subj_uri = $self->[NODE][URISTR];
+    my $subj = $self;
+    foreach my $pred_uri (keys %{$Schema->{$subj_uri}})
+    {
+	# Make an exception for type
+	#
+	next if $pred_uri eq NS_RDF.'type';
+
+	my $lref = $Schema->{$subj_uri}{$pred_uri} or
+	  die "\$Schema->{$subj_uri}{$pred_uri} not defined\n";
+	my $pred = $self->get($pred_uri);
+
+	# Just define the arcs.
+	#
+	_arcs_branch($self, $i, $subj, $pred, $lref);
+    }
+    $self->[NODE][REV_SUBJ_ALL] = 1;
+
+    return(1, 3);
+}
+
+
+sub init_rev_subjs_class
+{
+    my( $self, $i ) = @_;
+    #
+    # A class inherits it's super-class subClassOf properties
+
+    debug "RDFS init_rev_subjs_class $self->[URISTR]\n", 1;
+
+
+    # Since init_rev_subjs_class() depends on that all the other
+    # init_rev_subjs has been called, it will call init_rev_subjs()
+    # from here.  That would cause an infinite recurse unless the
+    # dispatcher would remember which interface subroutines it has
+    # called, by storing that in a hash in the context.  The
+    # dispatcher will not call the same interface subroutine twice (in
+    # deapth) with the same arguments.
+    #
+    # TODO: But how do we know if the cyclic dependency was a mistake
+    # or not?  In some cases, we should report it as an error.  ... I
+    # will waite with this until we have the function/property
+    # equality.
+    #
+    # $self->init_rev_subjs;
+
+
+    my $subClassOf = $self->get(NS_RDFS.'subClassOf');
+
+    # Could be optimized?
+    my $subj_uristr = $self->[NODE][URISTR];
+    foreach my $pred_uristr ( keys %{$Schema->{$subj_uristr}} )
+    {
+	my $lref = $Schema->{$subj_uristr}{$pred_uristr} or
+	  die "\$Schema->{$subj_uristr}{$pred_uristr} not defined\n";
+	my $pred = $self->get($pred_uristr);
+
+	# This should recursively add all arcs
+	&_arcs_branch($self, $i, $self, $pred, $lref);
+
+	if( $pred_uristr eq NS_RDFS.'subClassOf' )
+	{
+	    foreach my $superclass (
+		  @{ $self->arc_obj($subClassOf)->list }
+		 )
+	    {
+		foreach my $multisuperclass (
+		      @{ $superclass->arc_obj($subClassOf)->list }
+		     )
+		{
+
+		    # TODO: Place this dynamic statement in a special
+		    # namespace
+
+		    $self->declare_add_prop( $subClassOf,
+					     $multisuperclass );
+		}
+	    }
+	}
+
+	# TODO: Set create dependency on the subject and remove
+	# dependency on each added statement and change dependency on
+	# object literlas.
+    }
+
+    $self->[NODE][REV_SUBJ_ALL] = 1;
+
+    return( 1, 3 );
+}
+
+
+sub list_arcs   ### DEPRECATED
+{
+    my( $self, $i ) = @_;
+    #
+    # Only returns arcs from the top level
+
+    my $arcs = [];
+    foreach my $subj_uri ( keys %$Schema )
+    {
+	# Could be optimized?
+	foreach my $pred_uri ( keys %{$Schema->{$subj_uri}} )
+	{
+	    my $lref = $Schema->{$subj_uri}{$pred_uri} or
+		die "\$node->{$subj_uri}{$pred_uri} not defined\n";
+	    my $subj = $self->get($subj_uri);
+	    my $pred = $self->get($pred_uri);
+	    push @$arcs, _arcs_branch($self, $i, $subj, $pred, $lref);
+	}
+    }
+    # TODO: use wantarray()
+    return $arcs;
+}
+
+sub base_level
+{
+    my( $self, $point ) = @_;
+
+    my $level = $Schema->{$self->[NODE][URISTR]}{NS_LS.'#level'};
+    defined $level or die "No level for $self->[NODE][URISTR]\n";
+    return( $level, 1);
+}
+
+sub level
+{
+    my( $self, $point ) = @_;
+
+    # The level of a node is a measure of it's place in the class
+    # heiarchy.  The Resouce class is level 0.  The level of a class
+    # is the level of the heighest superclass plus one.  Used for
+    # sorting in type_orderd_list().
+
+    # TODO: Store the level as a property
+
+    my $level = 0;
+    foreach my $sc ( @{$self->arc_obj(NS_RDFS.'subClassOf')->list} )
+    {
+	my $sc_level = $sc->level;
+	$level = $sc_level if $sc_level > $level;
+    }
+    $level++;
+
+    return( $level, 1);
+}
+
 
 sub delete_node
 {
-    my( $self, $i, $model ) = @_;
+    my( $self, $i ) = @_;
     #
     # TODO:
     #  1. The agent must be authenticated
@@ -184,20 +387,18 @@ sub delete_node
     #    - call statement->delete
     #  Remove self
 
-    die "Model not specified" unless $model;
-
     foreach my $arc ( @{ $self->arc->list} )
     {
 	my $obj = $arc->obj;
 #	warn "Would delete Obj $obj->[URISTR]\n";
 #	warn "Would delete Sta $arc->[URISTR]\n";
-	$obj->delete( $model );
-	$arc->delete( $model );
+	$obj->delete();
+	$arc->delete();
     }
     debug "Delete Node $self->[URISTR]\n", 1;
 
     # Removes the node from the interfaces
-    $self->remove( $model ); # TODO: maby check return value?
+    $self->remove(); # TODO: maby check return value?
 
 
     # TODO: Do not remove the node if it's defined by other
@@ -209,8 +410,7 @@ sub delete_node
     # TODO: Use the right channels to find all nodes that uses this
     # node; ie the subscription cache
 
-    # Is this an arc?
-    $self->declare_delete_arc;
+    $self->declare_del_node;
 
     return( 1, 1 );
 }
@@ -238,15 +438,15 @@ sub service_init_types
 
     debug "Initiating types for $self->[NODE][URISTR]\n", 1;
 
-    my $pattern = "^".NS_L."/service/[^/#]+\$";
+    my $pattern = "^".NS_LD."/service/[^/#]+\$";
     if( $self->[NODE][URISTR] =~ /$pattern/ )
     {
 	# Declare the types for the service
 	#
 	$self->[NODE]->declare_add_types( $self, [
-	      NS_L.'#Service',
-	      NS_L.'#Model',
-	      NS_L.'#Selection',
+	      NS_LS.'#Service',
+	      NS_LS.'#Model',
+	      NS_LS.'#Selection',
 	      NS_RDFS.'Container',
 	      NS_RDFS.'Resource',
 	      ]);
@@ -255,30 +455,11 @@ sub service_init_types
     return undef;
 }
 
-sub init_types
-{
-    my( $self, $i ) = @_;
-    #
-    # Set the types for this URI
-
-    # TODO: Set the implicit types (should be done last maby...)
-    return undef;
-
-    die "deprecated";
-
-    # Only set Resource for now.
-    debug "Setting type for $self->[URISTR] to Resource\n", 1;
-
-    $self->[NODE]->declare_add_types($i, [NS_RDFS.'Resource']);
-
-    return( undef );
-}
-
 sub desig_literal
 {
     if( $_[0]->[NODE][VALUE] )
     {
-	return( "'$_[0]->[NODE][VALUE]'", 1);
+	return( "'${$_[0]->[NODE][VALUE]}'", 1);
     }
     else
     {
@@ -287,15 +468,17 @@ sub desig_literal
     }
 }
 
+### <<<--- HERE !!!
+
 sub desig_resource
 {
-    debug "T ".$_[0]->types_as_string, 1;
+    debug $_[0]->types_as_string, 1;
 
     # Change to make method calls
     #
-    return( $_[0]->[NODE][LABEL] || 
-	    $_[0]->[NODE][NAME] || 
-	    $_[0]->[NODE][URISTR] || 
+    return( $_[0]->[NODE][LABEL] ||
+	    $_[0]->[NODE][NAME] ||
+	    $_[0]->[NODE][URISTR] ||
 	    '(anonymous resource)'
 	    , 1);
 }
@@ -332,10 +515,12 @@ sub arcs_list
 sub value
 {
     my( $self ) = @_;
-    $self->init_props unless $self->[NODE][PROPS];
+    $self->init_rev_subjs unless $self->[NODE][REV_SUBJ_ALL];
+
+#    warn "**** ".($self->types_as_string)."****\n";
 
     # TODO: Should return 2
-    return( $_[0]->[NODE][VALUE], 1);
+    return( ${$_[0]->[NODE][VALUE]}, 1);
 }
 
 
@@ -356,7 +541,6 @@ sub obj
     # TODO. Should return 2;
     return( $_[0]->[NODE][OBJ], 1);
 }
-
 
 sub _construct_interface_uri
 {
@@ -383,6 +567,76 @@ sub _construct_interface_uri
     return $uri->as_string;
 }
 
+
+sub _obj_list
+{
+    my( $self, $i, $ref ) = @_;
+    my @objs = ();
+
+    if( ref $ref eq 'SCALAR' )
+    {
+	push @objs, $self->get($$ref);
+    }
+    elsif( ref $ref eq 'ARRAY' )
+    {
+	foreach my $obj ( @$ref )
+	{
+	    push @objs, _obj_list( $self, $i, $obj );
+	}
+    }
+    else
+    {
+	push @objs, $self->declare_literal($i, undef, $ref);
+    }
+
+    return \@objs;
+}
+
+sub _arcs_branch
+{
+    my( $self, $i, $subj, $pred, $lref ) = @_;
+
+    my $model = $self->get($Schema->{$subj->[NODE][URISTR]}{NS_LS.'#ns'});
+    my $arcs = [];
+    my $obj;
+    if( ref $lref and ref $lref eq 'SCALAR' )
+    {
+	my $obj_uri = $$lref;
+	$obj = $self->get($obj_uri);
+    }
+    elsif( ref $lref and ref $lref eq 'HASH' )
+    {
+	# Anonymous resource
+	# (Sublevels is not returned)
+
+	die "Anonymous resources not supported";
+#	$obj = RDF::Service::Resource->new($ids, undef);
+    }
+    elsif(  ref $lref and ref $lref eq 'ARRAY' )
+    {
+	foreach my $item ( @$lref )
+	{
+#	    warn "Ignored recurse\n"; # not any more?
+	    push @$arcs, _arcs_branch($self, $i, $subj, $pred, $item);
+	}
+	return @$arcs;
+    }
+    else
+    {
+	confess("_arcs_branch called with undef obj: ".Dumper(\@_))
+	    unless defined $lref;
+
+	# TODO: The model of the statement should be NS_RDFS or NS_RDF
+	# or NS_LS, rather than $i
+	#
+	debug "_arcs_branch adds literal $lref\n", 1;
+	$obj = $self->declare_literal( \$lref );
+    }
+    debug "_arcs_branch adds arc $pred->[NODE][URISTR]( ".
+      "$subj->[NODE][URISTR], # $obj->[NODE][URISTR])\n", 3;
+
+    return @$arcs, $self->declare_arc( $pred, $subj, $obj );
+}
 
 
 1;

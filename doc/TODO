@@ -1,4 +1,4 @@
-$Id: TODO,v 1.1 2000/10/22 11:07:31 aigan Exp $
+$Id: TODO,v 1.3 2000/11/12 18:13:37 aigan Exp $
 
 Prototype case one: Address register
 
@@ -11,25 +11,20 @@ DONE  - Context wrappers for objects
 DONE  - Selections for searches
 DONE  - minimal arc(), arc_obj() and rev_type()
 DONE  - list() and li()
-      --- (alpha 2)
-      - c/s architecture
-      - callbacks to updated cache on changes in the source
-      --- (alpha 3)
-      - multipple criterions
-      - sub criterions
-      - alternative lists
-      --- (alpha 4)
-      - criterions in context
+DONE  --- (alpha 2)
+DONE  - c/s architecture
+DONE  - callbacks to updated cache on changes in the source
+DONE  --- (alpha 3)
       - Session metadata
       - User identification
-      --- (alpha 5)
+      --- (alpha 4)
       - Model authority
       - authenticated change/delete
       - distributive properties
-      --- (alpha 6)
+      --- (alpha 5)
       - minimal SDL general presentation framework
       - minimal inference/translation rules
-      --- (alpha 7)
+      --- (alpha 6)
       - Generalize prototyp application
       - Set official schema URIs
       - Test suite

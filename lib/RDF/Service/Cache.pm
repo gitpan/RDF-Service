@@ -1,4 +1,4 @@
-#  $Id: Cache.pm,v 1.5 2000/09/24 16:53:33 aigan Exp $  -*-perl-*-
+#  $Id: Cache.pm,v 1.8 2000/10/21 12:59:48 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Cache;
 
@@ -21,12 +21,12 @@ package RDF::Service::Cache;
 use strict;
 use base 'Exporter';
 use vars qw( $uri2id $id2uri $ids @EXPORT_OK %EXPORT_TAGS $create_cnt
-	     $create_time $prefixlist $node );
-use RDF::Service::Constants qw( :resource :interface );
+	     $create_time $prefixlist $node %fc );
+use RDF::Service::Constants qw( :resource :interface :context );
 use Carp;
 
-our $DEBUG = 0;
-
+our $DEBUG = 1;
+our $Level = 0;
 
 {
     # If the hash and array gets to large, they should be tied to a
@@ -35,6 +35,8 @@ our $DEBUG = 0;
     # These id's are internal and can be used for diffrent uri's if
     # the server is restarted. They should not be used to store data
     # in interfaces, such as the standard DBI interface.
+
+    # %fc is the function counter.  Used for debugging
 
     $uri2id = {};
     $id2uri = [undef]; #First slot reserved
@@ -49,10 +51,49 @@ our $DEBUG = 0;
     $create_time = 0;
 
     my @ALL = qw( uri2id id2uri generate_ids interfaces get_unique_id
-    list_prefixes );
+    list_prefixes debug $Level $DEBUG debug_start debug_end );
     @EXPORT_OK = ( @ALL );
     %EXPORT_TAGS = ( 'all'        => [@ALL],
 		     );
+}
+
+sub debug
+{
+    my( $msg, $verbose ) = @_;
+    $verbose ||= 0;
+
+    if( $verbose <= $DEBUG )
+    {
+	$msg =~ s/^/'|  'x$Level/gem;
+	warn( $msg );
+    }
+}
+
+sub debug_start
+{
+    my( $call, $no, $res ) = @_;
+    return unless $DEBUG;
+
+    die "Recursive loop detected. Bailing out!\n" if $Level >= 15;
+
+    $no = ' ' unless defined $no;
+    $fc{$call}++;
+    my $msg = '|  'x$Level;
+    $msg .= "/-- $no $call       $fc{$call}\n";
+    warn $msg;
+    $Level++;
+    debug( $res->[NODE][URISTR]."\n", 1) if $res;
+}
+
+sub debug_end
+{
+    my( $call, $no ) = @_;
+    return unless $DEBUG;
+    $no = ' ' unless defined $no;
+    $Level--;
+    my $msg = '|  'x$Level;
+    $msg .= "\\__ $no $call\n";
+    warn $msg;
 }
 
 sub uri2id
@@ -92,6 +133,7 @@ sub interfaces
 {
     # Return ref to array of inteface object
 
+#    carp "*** interfaces @{$ids->{$_[0]}} ***\n";
     return $ids->{$_[0]} or die "IDS $_[0] does not exist\n";
 }
 
@@ -125,7 +167,7 @@ sub list_prefixes
 {
     my( $ids ) = @_;
 
-    warn "Creating a prefixlist for IDS $ids\n" if $DEBUG;
+    debug "Creating a prefixlist for IDS $ids\n", 2;
 
     return @{ $prefixlist->{$ids} ||= [sort {length($b) <=> length($a)} 
 				       map( keys %{$_->[MODULE_REG]},

@@ -1,4 +1,4 @@
-#  $Id: Service.pm,v 1.6 2000/09/24 16:53:32 aigan Exp $  -*-perl-*-
+#  $Id: Service.pm,v 1.10 2000/10/22 10:59:00 aigan Exp $  -*-perl-*-
 
 package RDF::Service;
 
@@ -20,15 +20,14 @@ package RDF::Service;
 
 use strict;
 use 5.006;
-use RDF::Service::Constants qw( :rdf :namespace );
-use RDF::Service::Cache qw( get_unique_id uri2id );
+use RDF::Service::Constants qw( :rdf :namespace :context );
+use RDF::Service::Cache qw( get_unique_id uri2id debug debug_start
+			    debug_end );
 use RDF::Service::Resource;
+use RDF::Service::Context;
 use Data::Dumper;
 
-our $VERSION = 0.01;
-
-our $DEBUG = 0;
-
+our $VERSION = 0.02;
 
 sub new
 {
@@ -71,6 +70,8 @@ sub new
     # and so that we still can reuse the cached resource objects
     # between more than one session.
 
+    debug_start( "new RDF::Service");
+
     if( $uristr )
     {
 	# Must have a Service URI as recognized by the Base find_node
@@ -88,9 +89,7 @@ sub new
 	$uristr = NS_L."/service/".&get_unique_id;
     }
 
-    my $s = RDF::Service::Resource->new('', $uristr);
 
-    $s->[INTERFACES] = [];
     # We would have called $s->init_private(), if there would be
     # anything to init.
 
@@ -101,16 +100,36 @@ sub new
     # interfaces.  But here we state the types for the newly created
     # Service object.
 
-    # Declare the types for the service
-    #
-    my $c_Resource = $s->get_node(NS_RDFS.'Resource');
-    my $c_Model = $s->get_node(NS_L.'Model');
-    my $c_Service = $s->get_node(NS_L.'Service');
-    my $types = [$c_Service, $c_Model, $c_Resource];
-    $s->declare_self( $s, $types );
+    # Declare the types for the service.  Do it the low-level way.  We
+    # can not call declare_add_typews() since that calles init_props()
+    # for the classes.
 
+    my $so = RDF::Service::Resource->new('', $uristr);
+    my $s = RDF::Service::Context->new( $so, {} );
+
+    $so->[TYPES] = [];
+    $so->[INTERFACES] = [];
+    $so->[MODEL] = $s->get(NS_L.'#The_Base_Model');
+    $s->[WMODEL] = $s->declare_model( $so->[MODEL] );
+
+
+    foreach my $type ( $s->get(NS_L.'#Service'),
+		       $s->get(NS_L.'#Model'),
+		       $s->get(NS_L.'#Selection'),
+		       $s->get(NS_RDFS.'Container'),
+		       $s->get(NS_RDFS.'Resource'),
+		      )
+    {
+	# We wan't to remember what model/interface says what.
+	# TODO: Here we use interface, but should probably use model.
+	#
+	$so->[TYPE]{$type->[NODE][ID]}{$so->[ID]} = 1;
+	push @{$so->[TYPES]}, $type
+    }
 
     &_bootstrap( $s );
+
+    debug_end("new RDF::Service");
 
     return $s;
 }
@@ -121,7 +140,7 @@ sub _bootstrap
     #
     # Connect the base interface.
 
-    warn "Bootstrap\n" if $DEBUG;
+    debug "Bootstrap\n", 1;
 
 
     my $module = "RDF::Service::Interface::Base::V01";

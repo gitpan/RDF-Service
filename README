@@ -6,20 +6,22 @@ DESCRIPTION
     Wraf implements a RDF API that hopes to realize the Semantic
     Web. The framework uses RDF for data, user interface, modules and
     object methods. It uses interfaces to other sources in order to
-    integrate all data in one enviroment, regardless of storage form
+    integrate all data in one enviroment, regardless of storage form.
 
 
-WARNING
-    This is alfa software.  Be careful.
+DOCUMENTATION
+    The documentation is far from complete and not up to date.  Send
+    any question to the mailinglist rdf@uxn.nu.  Look for comments in
+    the source and notes in the ./doc directory.
 
 
 PREREQUISITIES
-    Perl v5.6 with Template v2, Time::Hires, CGI, DBI, URI and
-    PostgreSQL
+    Perl v5.6 with Template v2, Time::Hires, CGI, CGI::Debug, DBI,
+    DBD::Pg, URI and PostgreSQL
 
 
 INSTALL
-    The test program cgi-bin/person.cgi and the ones in t will look
+    The test program cgi-bin/person.cgi will look
     for the libraries in ../lib (relative to the executable).  But if
     you would like to install the libraries anyway, do the:
 
@@ -27,8 +29,8 @@ INSTALL
     make
     make install
 
-    Create the database wraf_v01a in PostgreSQL and initiate it with
-    the tables in doc/rdf.sql
+    Create the databases wraf_v01a and wraf_v01b in PostgreSQL and
+    initiate them with the tables in doc/rdf.sql
 
     Make the CGI program executable from a webserver
 

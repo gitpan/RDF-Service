@@ -1,5 +1,5 @@
 -- Wraf DBI Interface V01
--- $Id: rdf.sql,v 1.3 2000/09/24 16:53:32 aigan Exp $
+-- $Id: rdf.sql,v 1.4 2000/09/26 19:45:22 aigan Exp $
 
 
 DROP SEQUENCE node_id_seq;
@@ -64,7 +64,7 @@ CREATE TABLE node
     -- implicit 'value' statement for the literal uri.  Fact is always
     -- true unless the node is an arc that's only reified.
 
-    pred		 int4, -- uri
+    pred		 int4, -- uri  'pred' defines arc exsistence
     distr		 bool, -- distr over subj container or prefix
     subj		 int4, -- uri
     obj			 int4, -- uri

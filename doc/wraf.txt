@@ -1,273 +1,65 @@
-Example:
+$Id: wraf.txt,v 1.5 2000/10/22 10:59:00 aigan Exp $
 
-my $a = new RDF::Dispatcher;
+We have the intention to not differentiate between properties and
+functions.  A property value can be determined using any algorithm.
 
-# Connect to a new interface. Return the interface resource
-my $b = $a->get_interface("RDF::Interface::Schema::RDF_syntax_19990222");
+A function call with parameters should be the same as a query model.
 
-# Return the collection of all statements known to the interface
-my $c = $b->get_model();
 
-# Return the collection that is the sum of all statements from the
-# connected interfaces
-my $d = $a->get_model();
+Further : All functions should have a unique URI in the same manner
+that the module itself is a resource, as is the resulting interface.
 
-# Return the model that is the part of the $d model matching the
-# arguments
-my $e = $d->find(pred,subj,obj);
+That means that you in the interface could use properties as methods.
+For example: "$person->contact->home->phone->value" or something like
+that.
 
-# Get a model from within the interface
-my $f = $b->get_model( uri );
+This would require you to first register shortcuts for the functions
+and properties you would like to use in this way.  That is: tell the
+service how to translate the name to the full uri.  Any nonregistred
+functions can still be called with something like $person->get(
+"http://.../" ).
 
-# Get a collection of all models contained in the interface
-my $g = $b->get_all_models();
 
-# Return a collection of all the subject resources from the model
-my $h = $d->subjects;
+One important use of this property/function equality is the
+presentation layer. The presentation of a resource is a property.
+That presentation resource has metadata saying what type of
+presnetation it is - the context.  A resource can have several
+presentations.  The method call for the presentation can send
+arguments to make the selection among the presentations. Like:
 
-# Sets the prefix for the model. Created resources and statements gets
-# this prefix
-$d->set_prefix( uri );
+  $person -> presentation(
+                 format => 'html',
+                 layout =) $fancy_layout,
+                 trust  => $my_trust,
+                ) -> value;
 
-# Returns a collection of resources representing the interface
-# prefixes. The interface only contains statements and subjects with
-# these prefixes.
-my $i = $b->get_prefix();
+Or something like that...  And you could be certain that this would be
+true:
 
+  $person -> presentation(
+                 format => 'html',
+                 layout =) $fancy_layout,
+                 trust  => $my_trust,
+                ) -> format -> value  eq 'html';
 
+So the style would also be used for normal propertues:
 
-Let every object be a resource. Couple this resource to a
-interface. Also couple it with a path of classes that can be used.
-All objects will be dispatcher objects.  The dispatcher objects
-AUTOLOAD module sets the local @isa to be used for the method lookup,
-depending on the type of object, its interface, and what modules has
-been declared.
+$person->first_name(according_to=>$this_person)->value;
 
 
 
+But what is the model of those generated statements?  The resulting
+model would be a product of the issuer of the involved function as
+well as all parameters used.
 
-----------------------------------------------------
 
-Thoughts about the Resource objects connection to a interface.
-Statements storeded in a DBI interface will have their resources also
-stored in the DB. If you say that a specific class is a subClassOf
-another class, this means that subClassOf is stored in the DB, even if
-it is primarly handled by the RDFS interface.
+The reson I write this now is because I just now want to define the
+calling order of the functions in the jumptable. It should be called
+in order of speciality. The type of the resource is used.  An
+connected model can define that one class is a subClassOf another
+class.  And the RDFS model will programmaticly say that the specific
+class is subClassOf all classes that the super-class is subClassOf.
 
-The DBI interface will insert the node in the DB. It may copy some
-information from the other interface, like the label. But it shouldn't
-have to, since the DBI isn't the primary source of data about the
-object.  The info will come from the primary source.
+This subClassOf thing will now serve as the test for this
+property/function implementation.
 
-The node will point to a model and that model will hold information
-about the origin of the information and then it was last updated. The
-agent will be the URI for the server and the source will be the URI of
-the interface.  The details of this has not been developed.
-
-The object in the cache will be marked with the interface that handles
-its storage/retrievel. Other modules could offer methods for the
-object.
-
-A search for a resource will use range of the object. The find method
-for a model will search its contents, a find for a interface will
-search the interface and a find for a RDF object will search all
-connected interfaces. Which interface to call in a search is
-determined by the requested URI and the interface base URIs. It should
-first search the closest match and then continue with the more general
-interfaces.  The DBI interface can hold everything and will thus
-always be searched.
-
-It's one thing to be the owner or home interface of a node, and
-antoher thing to say something about the node or with the node. If we
-want to know everything said about a thing, we will have to search all
-interfaces that could give a part of the answer. But if we only want
-to know whats said from a limited number or sources, we can restrict
-the search to the interfaces that handles the models owned by the
-source we are intrested in.
-
-#The first parameter to any method should be the client object. This
-#object holds info about the connected interfaces and perhaps other
-#preferences. There should be possible to have many diffrent and
-#perhaps specialized configurations and use them in combinations.
-
-The object interface list is constructed from the client interface
-list signature and the object URI.
-
-#A object is called with the client reference as a argument. The client
-#holds a compiled key representing the interface list. The object has a
-#key that represent all its types and all applicable interfaces.  A
-#jumptable is constructed for the combination of the client and object
-#keys. Every new object finds out its applicable interfaces.
-
-How theese interfaces are to be used for diffrent purposes has yet to
-be explored. On a method invocation, all methods should return a
-result object or string that should give the requested information and
-also give a response code telling if the next interface on the list
-should be called or not. (This could be the second value.)
-
-A list of things an object would like to do:
-
- * get created / modified / deleted
-
- * List the arcs in a interface
-
- * List arcs in a model
-
- * Get the label (for which objects has the interface attributes?)
-
- * Which resources does the interface own?
-
-
-----------------------------------------------------
-
-Några tankar om förändringar i RDF-klasserna.
-
-Databasen består i huvudsak av node och arc.
-
-Node består av id, uri och literal. En boolen håller reda på om
-objektet är en resource eller literal. En pekare kan finnas för att
-peka till en BLOB-tabell för att hålla större data. Ett type-fält kan
-spara många lookups. Men då behövs också ett sätt att avgöra internt
-id för den arc som bakas in. Den skulle kunna vara id för resource
-+1. Dessutom behöver man veta om resourcen har ytterligare typer eller
-inte genom exempelvis ytterligare ett boolean-fält. Vi måste då också
-hålla ögonen på relationen mellan type och lresource /
-literal-booleanen, samt melaln den och literal-fältet respektive
-BLOB-pekaren. Med övrig info skulle man kunna klara sig utan den
-booleanen, men det lönar sig att slippa se om resursens typ indirekt
-är resource eller literal.
-
-Arc består av id, pred, subj och obj. Dessutom måste den ha en uri
-ifall arcen är importerad och redan har ett URI. Och eftersom vi vill
-koppla alla arcs till en model kan detta också göras. Även här får vi
-ha en imlicit uri för den kopplingen. Det kan också vara intressant
-att ha ett datumfält som anger tid för arc statement.
-
-Model kan användas för olika sorters filtreringar av appliaktionen för
-operationer och presentationer. För scheman finns kopplingen mellan
-model och namespace.
-
-----------------------------------
-
-Här kommer en rapport för wraf 0.21.
-
-Har kämpat emot hunger, trötthet, lättja och depression för att komma
-vidare. Har inte jobbat med filerna på ett par veckor nu.
-
-Version 0.21 är alltså den nya versionen. Design bygger bland annat på
-anteckningar från vårat förra möte:
-    http://paranormal.se/perl/proj/rdf/wraf/devel/latest/doc/wraf2.txt
-
-Jag skapade ett enkelt testfall:
-    http://paranormal.se/perl/proj/rdf/wraf/devel/latest/bin/w21a.pl
-
-Som använder de moduler jag börjat på här:
-    http://paranormal.se/perl/proj/rdf/wraf/devel/latest/lib/RDF_023/
-
-
-Har lagt in ett par kommentarer i källkoden.
-
-Testfallet ser alltså ut såhär:
-
-1. Skapa dispatcherobjektet.
-
-2. Koppla upp mot ett interface och spara interfaceobjektet.
-
-3. Hämta den modell från interfacet som motsvarar alla dess statements
-
-4. Generera en lista över alla subjects i modellen
-
-5. Skriv ut resursens namn för varje subject i listan.
-
-
-Detta förefaller för mig vara relativt greppbart.
-
-
-Vad gäller modulstrukturen har jag valt att utgå från RDF och RDFS som
-en helhet. Jag skapat klasser för att representera resursern och alla
-dess varianter som jag måste eller vill specialbehandla.
-
-En viktig speciell sorts resurs är "collection" som är en samling av
-resurser. Ett specialfall av collection är model, som är en samling av
-resurser av typen statement. Alla urval av resurser kommer att
-retunera collections. Collection-objektet har de metoder som behövs
-för att komma åt dess element.
-
-De olika resursklassernas metoder kommer vid behov att anropa
-understödjande funktioner i interfacet (eller interfacen) för det
-objekt som behandlas.  Det är upp till varje resursmetod att
-kontrollera om interfacet för objektet har registrerat en optimerad
-funktion för att skapa resultatet.
-
-Det är alltså tänkt att varje interface deklarerar sina tjänster och
-att varje resurs är kopplad till en (eller möjligen flera) interface.
-
-Resursklasserna behöver å sin sida deklarera vilken sorts resurser de
-vill hantera. Om man så skapar en resurs av typen model, ska denna
-automagiskt höra till motsvarande klass och därmed få de metoder
-klassen erbjuder.
-
-Dispatcherobjektet bestämmer vilka moduler som används. En
-konfigurationsmodul kan ange defaultinställningar. Hela installationen
-skulle kunna behandlas som ett interface till en collection av
-moduler. (Skulle kunna...)
-
-Vi behöver tänka lite på vad som händer när vi vill introducera nya
-funktioner, som exempelvis versionshangering. Behövs det en hel
-uppsättning nya resursmoduler? En för varje sorts resurs som ska
-versionshanteras?
-
-
-Så... Vad jag fastnat i, och varför jag skriver, är att jag undrar vad
-Interface och Module egentligen är för en slags resurser. Vi har
-Function, Interface och Module. En Module kan vara ett Interface och
-ha en rad Functions.  Jag började med att lägga upp Module och
-Interface som Collections. Men är de collections? Är Module i stort
-sett en samling funktioner? Är Interface en samling resurser?  Jag vet
-inte.  Collection kan ju ha extra data förrutom samlingen. Men skulle
-man kanske istället låta Module ha en collection snarare än att den är
-en collection?
-
-Vill reda ut det här.
-
-
-I övrigt har jag ju nästan kommit hela vägen i detta första
-testfall.  Alla de viktigaste schema-uppgifterna från RDF och RDFS är
-inmatade statiskt i en hash i RDFS_200001.
-
-http://uxn.nu/wraf/devel/latest/lib/RDF_023/Interface/Schema/RDFS_200001.pm
-
-------------------------
-
-Varje interface har en hash med types där det för varje type finns en
-hash med metoder. Varje metod är en referens till en lista på de
-funtkioner som ska anropas för den metoden och typen.
-
-Varje resurs har en lista på interface den använder. För varje sådan
-lista finns en metodtabell som pekar på, för varje typ, vilka
-funktioner ett visst anrop ska gå till. Finns inte metodtabellen
-skapas den vid behov. (Varje interface kommer att ha en unik referens
-som ändras med uppdateringar.) Varje gång ändring sker i interface
-eller type nollställs en pekare som pekar till en unik hash för
-kombinationen av interfaces och types.
-
-När en resurs skapas skickas en referens till det aktuella
-interfacet. Alla resources är åtminstonne av type resource och för den
-typen ska det finnas en metod för att ta reda på vilka andra typer
-resourcen också är.
-
-Det här är en optimering av hastighet på bekostnad av utrymme. 
-
-För nyckel och internt id används en mappning av varje använd uri till
-ett löpnummer. Dvs en uri-hash för att slå upp id och en id-array för
-att slå upp uri. Då denna enbart används internt i programmet kan den
-nollställas vid omstart av program. Men om den blir stor kan den
-implementeras som två dbm som knyts till hash. Varje interface kan ha
-sina interna id's, men denna är interna för systemet i helhet.
-Speciellt för mappning av interface och typer till metoder och
-eventuellt för cache-funktionen, etc.
-
-The list of types should be expanded and specialiced types should be
-put first. The resource type should not be mentioned because all
-resources is of that type. Subtypes should NOT inherit methods from
-its more general type.

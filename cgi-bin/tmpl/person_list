@@ -1,20 +1,29 @@
 [% META title = 'Persons' %]
 
-[% persons = s.get_node("${NS_L}/Class#Person").objects_list %]
+[% persons = s.get("${NS_L}/Class#Person").rev_type.list %]
 
 <table>
 [% FOREACH person = persons %]
   <tr>
-    <td>[% person.get_objects_list(s.get_node("${NS_L}/Property#first_name")).0.value %]
-    <td>[% person.get_objects_list(s.get_node("${NS_L}/Property#last_name")).0.value %]
+    [% TRY %]
+      <td>[% person.arc_obj("${NS_L}/Property#first_name").li.value %]
+      <td>[% person.arc_obj("${NS_L}/Property#last_name").li.value %]
+    [% CATCH %]
+      [% CLEAR %]
+      <td colspan="2">Bad person: $error.info
+    [% END %]
+
     <td><input type="button" 
-               OnClick="f.r_person.value='$person.uri';go('person_view')"
+               OnClick="f.r_person.value='$person.uri';
+                        go('person_view')"
                value=" View ">
     <td><input type="button"
-               OnClick="f.r_person.value='$person.uri';go('person_edit_form')"
+               OnClick="f.r_person.value='$person.uri';
+                        go('person_edit_form')"
                value=" Edit ">
     <td><input type="button"
-               OnClick="f.r_person.value='$person.uri';go('person_list', 'person_delete')"
+               OnClick="f.r_person.value='$person.uri';
+                        go('person_list', 'person_delete')"
 	       value=" Delete ">
   </tr> 
 [% END %]

@@ -1,4 +1,4 @@
-#  $Id: RDFS_200001.pm,v 1.4 2000/09/01 17:25:09 aigan Exp $  -*-perl-*-
+#  $Id: RDFS_200001.pm,v 1.10 2000/10/22 10:59:00 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Interface::Schema::RDFS_200001;
 
@@ -22,15 +22,60 @@ use strict;
 use vars qw( $node );
 use RDF::Service::Constants qw( :all );
 use RDF::Service::Resource;
+use RDF::Service::Cache qw( debug );
 use Data::Dumper;
-use Carp;
-
-our $DEBUG = 0;
-
+use Carp qw( confess carp cluck croak );
 
 my $xml = "xml:"; ### TODO: Fix this
-
 # ??? Create literal URIs by apending '#val' to the statement URI
+
+
+sub register
+{
+    my( $interface ) = @_;
+
+    # TODO: Decide on a standard way to name functions
+    # # Will not use the long names in this version...
+    my $module_uri = "org.cpan.RDF.Interface.Schema.RDFS_200001";
+
+    # TODO: add init_rev_types and init_rev_props
+
+    return
+    {
+	&NS_RDF =>
+	{
+	    NS_L.'#Interface' =>
+	    {
+		'list_arcs' => [\&list_arcs],
+	    },
+	    NS_RDFS.'Resource' =>
+	    {
+		'init_types' => [\&init_types],
+	    },
+	},
+	&NS_RDFS =>
+	{
+	    NS_L.'#Interface' =>
+	    {
+		'list_arcs' => [\&list_arcs],
+	    },
+	    NS_RDFS.'Resource' =>
+	    {
+		'init_types' => [\&init_types],
+	    },
+	},
+	'' =>
+	{
+	    NS_RDFS.'Class' =>
+	    {
+		'init_props' => [\&init_props_class],
+	    },
+	},
+    };
+}
+
+
+
 
 $node =
 {
@@ -222,13 +267,13 @@ $node =
 	NS_L.'name' => 'value',
 	NS_RDF.'type' => \(NS_RDF.'Property'),
     },
-    NS_L.'Interface' =>
+    NS_L.'#Interface' =>
     {
 	NS_L.'ns' => NS_L,
 	NS_L.'name' => 'Interface',
 	NS_RDF.'type' => \(NS_RDFS.'Class'),
     },
-    NS_L.'interface' =>
+    NS_L.'#interface' =>
     {
 	NS_L.'ns' => NS_L,
 	NS_L.'name' => 'interface',
@@ -236,14 +281,21 @@ $node =
 	NS_RDFS.'domain' => \(NS_RDFS.'Resource'),
 	NS_RDFS.'range' => \(NS_L.'Interface'),
     },
-    NS_L.'Model' =>
+    NS_L.'#Selection' =>
+    {
+	NS_L.'ns' => NS_L,
+	NS_L.'name' => 'Selection',
+	NS_RDF.'type' => \(NS_RDFS.'Class'),
+	NS_RDFS.'subClassOf' => \(NS_RDFS.'Container'),
+    },
+    NS_L.'#Model' =>
     {
 	NS_L.'ns' => NS_L,
 	NS_L.'name' => 'Model',
 	NS_RDF.'type' => \(NS_RDFS.'Class'),
 	NS_RDFS.'subClassOf' => \(NS_RDFS.'Container'),
     },
-    NS_L.'model' =>
+    NS_L.'#model' =>
     {
 	NS_L.'ns' => NS_L,
 	NS_L.'name' => 'model',
@@ -251,46 +303,80 @@ $node =
 	NS_RDFS.'domain' => \(NS_RDFS.'Resource'),
 	NS_RDFS.'range' => \(NS_L.'Model'),
     },
-    NS_L.'Service' =>
+    NS_L.'#Service' =>
     {
 	NS_L.'ns' => NS_L,
 	NS_L.'name' => 'Service',
 	NS_RDF.'type' => \(NS_RDFS.'Class'),
+	NS_RDFS.'subClassOf' => \(NS_L.'Selection'),
     },
 };
 
-
-sub register
+sub init_props_class
 {
-    my( $interface ) = @_;
+    my( $self, $i ) = @_;
+    #
+    # A class inherits it's super-class subClassOf properties
 
-    # Todo: Decide on a standard way to name functions
-    # # Will not use the long names in this version...
-    my $module_uri = "org.cpan.RDF.Interface.Schema.RDFS_200001";
+    debug "RDFS init_props_class $self->[URISTR]\n", 1;
 
-    return
+    my $subClassOf = $self->get(NS_RDFS.'subClassOf');
+
+    # Could be optimized?
+    my $subj_uristr = $self->[NODE][URISTR];
+    foreach my $pred_uristr ( keys %{$node->{$subj_uristr}} )
     {
-	NS_RDF =>
+	my $lref = $node->{$subj_uristr}{$pred_uristr} or
+	  die "\$node->{$subj_uristr}{$pred_uristr} not defined\n";
+	my $pred = $self->get($pred_uristr);
+
+	# This should recursively add all arcs
+	&_arcs_branch($self, $i, $self, $pred, $lref);
+
+	if( $pred_uristr eq NS_RDFS.'subClassOf' )
 	{
-	    NS_L.'Interface' =>
+	    foreach my $superclass (
+		  @{ $self->arc_obj($subClassOf)->list }
+		 )
 	    {
-		'list_arcs' => [\&list_arcs],
-	    },
-	    NS_L.'Model' =>
-	    {
-	    },
-	    NS_RDFS.'Resource' =>
-	    {
-		'init_types' => [\&init_types],
-	    },
-	},
-    };
+		foreach my $multisuperclass (
+		      @{ $superclass->arc_obj($subClassOf)->list }
+		     )
+		{
+
+		    # TODO: Place this dynamic statement in a special
+		    # namespace
+
+		    $self->declare_add_prop( $subClassOf,
+					     $multisuperclass,
+					     $self->[NODE][MODEL]);
+		}
+	    }
+	}
+
+	# TODO: Set create dependency on the subject and remove
+	# dependency on each added statement and change dependency on
+	# object literlas.
+    }
+
+    return( 1, 3 );
 }
+
 
 sub init_types
 {
-    #### Will return the type for the resource
-    die "not implemented";
+    my( $self, $i ) = @_;
+
+#    warn "***The model of $i is $i->[MODEL]\n";
+    croak "Bad interface( $i )" unless ref $i eq "RDF::Service::Resource";
+
+    if( my $entry = $node->{$self->[NODE][URISTR]}{NS_RDF.'type'} )
+    {
+	$self->[NODE]->declare_add_types( $i->[MODEL],
+					  &_obj_list($self, $i, $entry) );
+	return( 1, 3);
+    }
+    return undef;
 }
 
 
@@ -308,8 +394,8 @@ sub list_arcs
 	{
 	    my $lref = $node->{$subj_uri}{$pred_uri} or
 		die "\$node->{$subj_uri}{$pred_uri} not defined\n";
-	    my $subj = $self->get_node($subj_uri);
-	    my $pred = $self->get_node($pred_uri);
+	    my $subj = $self->get($subj_uri);
+	    my $pred = $self->get($pred_uri);
 	    push @$arcs, _arcs_branch($self, $i, $subj, $pred, $lref);
 	}
     }
@@ -326,7 +412,7 @@ sub _arcs_branch
     if( ref $lref and ref $lref eq 'SCALAR' )
     {
 	my $obj_uri = $$lref;
-	$obj = $self->get_node($obj_uri);
+	$obj = $self->get($obj_uri);
     }
     elsif( ref $lref and ref $lref eq 'HASH' )
     {
@@ -340,7 +426,7 @@ sub _arcs_branch
     {
 	foreach my $item ( @$lref )
 	{
-#	    warn "Ignored recurse\n";
+#	    warn "Ignored recurse\n"; # not any more?
 	    push @$arcs, _arcs_branch($self, $i, $subj, $pred, $item);
 	}
 	return @$arcs;
@@ -350,12 +436,21 @@ sub _arcs_branch
 	confess("_arcs_branch called with undef obj: ".Dumper(\@_))
 	    unless defined $lref;
 
-	# The model of the statement should be NS_RDFS, rather than $i
+	# TODO: The model of the statement should be NS_RDFS or NS_RDF
+	# or NS_L, rather than $i
 	#
-	$obj = $self->declare_literal( $i, undef, $lref );
+	debug "_arcs_branch adds literal $lref\n", 1;
+#	debug  "*|* The node $self with URI $self->[NODE][URISTR]\n";
+#	warn "*|* has a model $self->[NODE][MODEL] with".
+#	  "URI $self->[NODE][MODEL][NODE][URISTR]\n";
+	$obj = $self->declare_literal( $self->[NODE][MODEL],
+				       undef, \$lref );
     }
-    return @$arcs, $self->declare_arc( $i, undef, $pred, $subj, $obj );
+    debug "_arcs_branch adds arc $pred->[NODE][URISTR]( ".
+      "$subj->[NODE][URISTR], # $obj->[NODE][URISTR])\n", 1;
 
+    return @$arcs, $self->declare_arc( $self->[NODE][MODEL],
+				       undef, $pred, $subj, $obj );
 }
 
 sub _obj_list
@@ -365,7 +460,7 @@ sub _obj_list
 
     if( ref $ref eq 'SCALAR' )
     {
-	push @objs, $self->get_node($$ref);
+	push @objs, $self->get($$ref);
     }
     elsif( ref $ref eq 'ARRAY' )
     {
@@ -376,28 +471,10 @@ sub _obj_list
     }
     else
     {
-	push @objs, $self->declare_literal($i, undef, $ref);
+	push @objs, $self->[NODE]->declare_literal($i, undef, $ref);
     }
 
-    return @objs;
+    return \@objs;
 }
-
-
-sub list_types   ## WRONG NAME
-{
-    my( $self, $i, $subj ) = @_;
-
-    # This seems terribly wrong!
-
-    if( my $objref = $node->{$subj->[URISTR]} )
-    {
-	return _obj_list( $self, $i, $objref );
-    }
-    else
-    {
-	return(); # Empty list
-    }
-}
-
 
 1;

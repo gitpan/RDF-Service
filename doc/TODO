@@ -1,0 +1,51 @@
+$Id: TODO,v 1.1 2000/10/22 11:07:31 aigan Exp $
+
+Prototype case one: Address register
+
+DONE  - Add properties
+DONE  - View all properties for person
+DONE  - Create a web HTML interface to register
+DONE  - Remove/change statements
+DONE  --- (alpha 1)
+DONE  - Context wrappers for objects
+DONE  - Selections for searches
+DONE  - minimal arc(), arc_obj() and rev_type()
+DONE  - list() and li()
+      --- (alpha 2)
+      - c/s architecture
+      - callbacks to updated cache on changes in the source
+      --- (alpha 3)
+      - multipple criterions
+      - sub criterions
+      - alternative lists
+      --- (alpha 4)
+      - criterions in context
+      - Session metadata
+      - User identification
+      --- (alpha 5)
+      - Model authority
+      - authenticated change/delete
+      - distributive properties
+      --- (alpha 6)
+      - minimal SDL general presentation framework
+      - minimal inference/translation rules
+      --- (alpha 7)
+      - Generalize prototyp application
+      - Set official schema URIs
+      - Test suite
+      --- (beta 1)
+
+
+Post 1.0:
+
+ - Adaptive internal data storage
+ - Query optimization engine
+ - HTTP interface
+ - XML import/export interface
+ - translation rules
+ - Complete SDL
+ - DSIG
+ - Function / property equality
+ - Advanced cache control
+ - Inter-service communication
+ - ...

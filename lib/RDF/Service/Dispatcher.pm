@@ -1,4 +1,4 @@
-#  $Id: Dispatcher.pm,v 1.7 2000/09/23 16:10:30 aigan Exp $  -*-perl-*-
+#  $Id: Dispatcher.pm,v 1.15 2000/10/21 12:59:48 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Dispatcher;
 
@@ -21,12 +21,10 @@ package RDF::Service::Dispatcher;
 use strict;
 use vars qw( %JumpJumpTable );
 use RDF::Service::Constants qw( :all );
-use RDF::Service::Cache qw( interfaces uri2id );
+use RDF::Service::Cache qw( interfaces uri2id debug $DEBUG
+			  debug_start debug_end );
 use Data::Dumper;
 use Carp;
-
-our $DEBUG = 0;
-
 
 # Every resource can only belong to one dispatcher. This should change
 # in a future version.
@@ -35,23 +33,18 @@ sub go
 {
     my( $self, $call, @args ) = @_;
 
-#    my $uri = $self->[URISTR] || '(anonymous resource)';
-    my $uri = $self->[URISTR] or confess "Call to $call from anonymous obj";
-    if( $DEBUG )
-    {
-	my $args_str = join ", ", map $_?"'$_'":"''", $call, @args;
-	warn "${uri}->go($args_str)\n";
-    }
+    my $uri = $self->[NODE][URISTR] or
+      confess "Call to $call from anonymous obj";
 
     # Todo: optimize for common case
     #
-    if( not defined $self->[JUMPTABLE] )
+    if( not defined $self->[NODE][JUMPTABLE] )
     {
 	# Select a jumptable
 
-	my $prefix_key = $self->[IDS].'/'.$self->find_prefix_id;
+	my $prefix_key = $self->[NODE][IDS].'/'.$self->[NODE]->find_prefix_id;
 
-	unless( defined $self->[TYPES] )
+	unless( defined $self->[NODE][TYPES] )
 	{
 	    # Create a temporary JUMPTABLE in order to call the
 	    # init_types() function in the correct interfaces
@@ -60,15 +53,14 @@ sub go
 	    # any interface explicitly. But is implicitly bound to the
 	    # Base interface.
 	    #
-	    my $c_Resource = $self->get_node( NS_RDFS.'Resource' );
-	    $self->[TYPES][0] = $c_Resource;
+	    $self->[NODE][TYPES][0] = $self->get( NS_RDFS.'Resource' );
 
 	    if(not defined $JumpJumpTable{$prefix_key})
 	    {
 		# Create the jumptable
 		&create_jumptable($self, $prefix_key);
-	    } 
-	    $self->[JUMPTABLE] = $JumpJumpTable{$prefix_key};
+	    }
+	    $self->[NODE][JUMPTABLE] = $JumpJumpTable{$prefix_key};
 
 	    # This will call go() the second time.  This time with the
 	    # temporary JUMPTABLE.  Since JUMPTABLE is defined, this
@@ -79,24 +71,25 @@ sub go
 
 
 	    &go($self, 'init_types');
-	    die "No types found for $self->[URISTR]\n " 
-		unless defined $self->[TYPES][0];
+	    die "No types found for $self->[NODE][URISTR]\n "
+		unless defined $self->[NODE][TYPES][0];
 	}
 
-	if( $DEBUG )
+	if( $DEBUG > 1 )
 	{
-	    warn "Types for $uri:\n";
-	    foreach my $type ( @{$self->[TYPES]} )
+	    debug "D Types for $uri:\n";
+	    foreach my $type ( @{$self->[NODE][TYPES]} )
 	    {
-		warn "\t$type->[ID] : $type->[URISTR]\n";
+		debug "..$type->[NODE][ID] : $type->[NODE][URISTR]\n";
 	    }
-	    warn "\n";
+	    debug "\n";
 	}
 
 	# Defines the TYPES list
 	#
-	my $key = $prefix_key.'/'.join('-', map $_->[ID], @{$self->[TYPES]});
-	warn "Jumptable for $uri is defined to $key\n" if $DEBUG;
+	my $key = $prefix_key.'/'.join('-', map $_->[NODE][ID],
+				       @{$self->[NODE][TYPES]});
+	debug "Jumptable for $uri is defined to $key\n", 2;
 
 	if(not defined $JumpJumpTable{$key})
 	{
@@ -104,7 +97,8 @@ sub go
 	    &create_jumptable($self, $key);
 	}
 
-	$self->[JUMPTABLE] = $JumpJumpTable{$key};
+	$self->[NODE][JUMPTABLE] = $JumpJumpTable{$key};
+	$self->[NODE][JTK] = $key;
     }
 
 
@@ -112,9 +106,12 @@ sub go
     ### Dispatch to the handling interfaces
     ###
 
-    if( defined(my $coderef = $self->[JUMPTABLE]{$call}) )
+    if( defined(my $coderef = $self->[NODE][JUMPTABLE]{$call}) )
     {
-	warn "Dispatching $call...\n\n" if $DEBUG;
+	# TODO: If call not found: treat this as a property and maby
+	# as an dynamic property
+
+	debug "Dispatching $call...\n", 2;
 
 	# Return a object or a list ref.
 	#  Arg 1: the return value
@@ -125,13 +122,20 @@ sub go
 	#         3     = Successful. Call next
 
 	my $success = 0;
+	my $result = [];
+	my $result_type = 0;
 
 	for( my $i=0; $i<= $#$coderef; $i++ )
 	{
+	    debug_start( $call, $i, $self );
+	    debug "..Calling $coderef->[$i][1][URISTR]\n", 2;
+
 	    # The second parameter is the interface object
-	    my( $res, $action ) = &{$coderef->[$i][0]}($self, 
+	    my( $res, $action ) = &{$coderef->[$i][0]}($self,
 						       $coderef->[$i][1],
 						       @args);
+
+
 	    if( not defined $action )
 	    {
 		die "Malformed return value from $call ".
@@ -139,11 +143,22 @@ sub go
 	    }
 	    elsif( $action == 1 )
 	    {
+		debug_end( $call, $i );
 		return $res;
 	    }
 	    elsif( $action == 2 )
 	    {
-		die "Not implemented";
+		if( not defined $result_type)
+		{
+		    # This is the first pat. No copying needed
+		    $result = $res;
+		}
+		else
+		{
+		    # The first iterface decides the result type
+		    $result_type ||= 2;
+		    push @$result, @$res;
+		}
 	    }
 	    elsif( $action == 3)
 	    {
@@ -153,14 +168,33 @@ sub go
 	    {
 		confess "Action ($action) not implemented";
 	    }
+	    debug_end( $call, $i );
 	}
-	return $success;
+
+#	if( $call eq 'init_types' )
+#	{
+#	    my @types = map "\t$_->[NODE][URISTR]\n",
+#	      @{$self->[NODE][TYPES]};
+#	    warn("\nTypes for $uri\n@types\n");
+#	}
+
+	if( $result_type == 2 )
+	{
+	    return $result;
+	}
+	else
+	{
+	    return $success;
+	}
     }
 
 #    warn " Dumping info for $self\n";
 #    warn $self->to_string;
-    my @types = map "\t".$_->uri."\n", @{$self->[TYPES]};
-    die("\nNo function named '$call' defined for $uri\n@types\n");
+
+    my @types = map "\t".$_->uri."\n", @{$self->[NODE][TYPES]};
+    $self->[NODE][JTK] ||= "--no JTK--";
+    die("\nNo function named '$call' defined for $uri ".
+	  "($self->[NODE][JTK])\n@types\n");
 }
 
 sub create_jumptable
@@ -178,35 +212,35 @@ sub create_jumptable
     # Remember if the codref already has been added for the function
     my %func_count;
 
-    warn "Constructing $key jumptable\n" if $DEBUG;
+    debug "Constructing $key jumptable\n", 2;
 
     # Iterate through every interface and type.
-    foreach my $interface ( @{interfaces( $self->[IDS] )} )
+    foreach my $interface ( @{interfaces( $self->[NODE][IDS] )} )
     {
-	warn "\tI ".$interface->[URISTR]."\n" if $DEBUG;
-	foreach my $domain ( sort {length($b) <=> length($a)} 
+	debug "..I ".$interface->[URISTR]."\n", 2;
+	foreach my $domain ( sort {length($b) <=> length($a)}
 			     keys %{$interface->[MODULE_REG]} )
 	{
-	    next if $self->[URISTR] !~ /^\Q$domain/;
+	    next if $self->[NODE][URISTR] !~ /^\Q$domain/;
 
-	    warn "\t\tD $domain\n" if $DEBUG;
+	    debug "....D $domain\n", 2;
 
 	    my $domain_reg = $interface->[MODULE_REG]{$domain};
-	    foreach my $type ( @{$self->[TYPES]} )
+	    foreach my $type ( @{$self->[NODE][TYPES]} )
 	    {
 #		warn "checking $type->[URISTR]...\n";
-		if( defined( my $jt = $domain_reg->{ $type->[URISTR]} ))
+		if( defined( my $jt = $domain_reg->{ $type->[NODE][URISTR]} ))
 		{
-		    warn "\t\t\tT $type->[URISTR]\n" if $DEBUG;
+		    debug "......T $type->[NODE][URISTR]\n", 2;
 		    foreach my $func ( keys %$jt )
 		    {
-			warn "\t\t\t\tF $func()\n" if $DEBUG;
+			debug "........F $func()\n", 2;
 			# Add The coderefs for this type
 			foreach my $coderef ( @{$jt->{$func}} )
 			{
-			    next if defined $func_count{$func}{$coderef};
+			    next if defined $func_count{$func}{$coderef}{$interface};
 			    push @{$entry->{$func}}, [$coderef,$interface];
-			    $func_count{$func}{$coderef}++;
+			    $func_count{$func}{$coderef}{$interface}++;
 			}
 		    }
 		}
@@ -219,36 +253,6 @@ sub create_jumptable
 }
 
 
-sub to_string
-{
-    my( $self ) = @_;
-
-    my $str = "";
-    no strict 'refs';
-
-    {
-	my @urilist = map( $_->[URISTR], @{ $self->[TYPES] });
-	$str.="TYPES\t: @urilist\n";
-    }
-
-
-    foreach my $attrib (qw( IDS URISTR ID NAME LABEL VALUE FACT PREFIX MODULE_NAME ))
-    {
-	$self->[&{$attrib}] and $str.="$attrib\t:".
-	    $self->[&{$attrib}] ."\n";
-    }
-
-    foreach my $attrib (qw( NS MODEL ALIASFOR LANG PRED SUBJ OBJ ))
-    {
-#	my $dd = Data::Dumper->new([$self->[&{$attrib}]]);
-#	$str.=Dumper($dd->Values)."\n\n\n";
-#	$self->[&{$attrib}] and $str.="$attrib\t:".Dumper($self->[&{$attrib}])."\n";
-	$self->[&{$attrib}] and $str.="$attrib\t:".
-	    ($self->[&{$attrib}][URISTR]||"no value")."\n";
-    }
-
-    return $str;
-}
 
 1;
 

@@ -1,3 +1,5 @@
+$Id: get_node.txt,v 1.2 2000/10/22 10:59:00 aigan Exp $
+
 I have thought about how to create the resource objects.  There are
 many variants.
 

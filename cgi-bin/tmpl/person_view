@@ -1,18 +1,22 @@
 [% META title = 'Persons' %]
 
-[% person = s.get_node(cgi.param('r_person')) %]
+[% person = s.get(cgi.param('r_person')) %]
 
 <h2>
-  [% person.get_objects_list(s.get_node("${NS_L}/Property#first_name")).0.value %]
-  [% person.get_objects_list(s.get_node("${NS_L}/Property#last_name")).0.value %]
+  [% TRY %]
+    [% person.arc_obj("${NS_L}/Property#first_name").li.value %]
+    [% person.arc_obj("${NS_L}/Property#last_name").li.value %]
+  [% CATCH %]
+    [% CLEAR %] A person without a name
+  [% END %]
 </h2>
 
 <dl>
-[% FOREACH prop = person.get_props_list %]
-  <dt>[% prop.desig %]</dt>
+[% FOREACH pred = person.arc_pred.list %]
+  <dt>[% pred.desig %]</dt>
   <dd>
     <ol>
-    [% FOREACH obj = person.get_objects_list(prop) %]
+    [% FOREACH obj = person.arc_obj(pred).list %]
       <li>[% obj.desig %]</li>
     [% END %]
     </ol>

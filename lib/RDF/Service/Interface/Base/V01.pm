@@ -1,11 +1,11 @@
-#  $Id: V01.pm,v 1.9 2000/09/24 16:53:33 aigan Exp $  -*-perl-*-
+#  $Id: V01.pm,v 1.17 2000/10/22 10:59:00 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Interface::Base::V01;
 
 #=====================================================================
 #
 # DESCRIPTION
-#   Interface to the basic Resource actions 
+#   Interface to the basic Resource actions
 #
 # AUTHOR
 #   Jonas Liljegren   <jonas@paranormal.se>
@@ -20,12 +20,9 @@ package RDF::Service::Interface::Base::V01;
 
 use strict;
 use RDF::Service::Constants qw( :all );
-use RDF::Service::Cache qw( generate_ids uri2id );
+use RDF::Service::Cache qw( generate_ids uri2id debug $DEBUG);
 use URI;
 use Data::Dumper;
-
-our $DEBUG = 0;
-
 
 sub register
 {
@@ -35,24 +32,43 @@ sub register
     {
 	'' =>
 	{
-	    NS_L.'Service' =>
+	    NS_L.'#Service' =>
 	    {
 		'connect' => [\&connect],
 		'find_node' => [\&find_node],
 	    },
-	    NS_L.'Model' =>
+	    NS_L.'#Model' =>
 	    {
-		'list_arcs' => [\&list_model_arcs],
+		'arcs_list' => [\&arcs_list],
+		'is_empty'  => [\&not_implemented],
+		'size'      => [\&not_implemented],
+		'validate'  => [\&not_implemented],
+
+		# The NS. The base for added things...
+		'source_uri'=> [\&not_implemented],
+
+		# is the model open or closed?
+		'is_mutable'=> [\&not_implemented],
+
 	    },
 	    NS_RDFS.'Literal' =>
 	    {
 		'desig' => [\&desig_literal],
+		'value' => [\&value],
+	    },
+	    NS_RDF.'Statement' =>
+	    {
+		'pred' => [\&pred],
+		'subj' => [\&subj],
+		'obj'  => [\&obj],
 	    },
 	    NS_RDFS.'Resource' =>
 	    {
 		'desig' => [\&desig_resource],
-#          'init_types' => [\&init_types],
 		'delete' => [\&delete_node],
+	    },
+	    NS_RDFS.'Class' =>
+	    {
 	    },
 	},
 	NS_L."/service/" =>
@@ -65,6 +81,7 @@ sub register
     };
 }
 
+sub not_implemented { die "not implemented" }
 
 sub connect
 {
@@ -81,26 +98,35 @@ sub connect
     # literals, namespaces, resource names and other things.
 
 
-    my $uri = _construct_interface_uri( $module, $args );
-
-    # Create the new interface resource
+    # Create the new interface resource object
     #
-    my $ni = RDF::Service::Resource->new($self, $uri);
+    my $uri = _construct_interface_uri( $module, $args );
+    my $nio = RDF::Service::Resource->new($self, $uri);
 
-    $ni->[MODULE_NAME] = $module; # Should we also save the args?
-    $RDF::Service::Cache::node->{$self->[IDS]} = {};
-    push @{$self->[INTERFACES]}, $ni;
-    $self->[IDS] = $ni->[IDS] = generate_ids($self->[INTERFACES]);
 
-    $self->init_private;
+    # Update the Service object IDS
+    #
+    push @{$self->[NODE][INTERFACES]}, $nio;
+    $self->[NODE][IDS] = $nio->[IDS] =
+      generate_ids($self->[NODE][INTERFACES]);
+
+    # Initialize the cache for this IDS.  Each IDS has it's own cache
+    # of node objects
+    #
+    $RDF::Service::Cache::node->{$self->[NODE][IDS]} ||= {};
+
+    # Set up the new object, based on the IDS
+    #
+    $nio->[MODEL] = $self->[NODE][MODEL];
+    $nio->[MODULE_NAME] = $module; # This is not used
+    $nio->init_private();
+
 
     # Purge the existing Service jumptable, because of the changed IDS
     #
-    $self->[JUMPTABLE] = undef;
+    $self->[NODE][JUMPTABLE] = undef;
+    $self->[NODE]->init_private;
 
-    # Initialize  with the updated IDS
-    #
-    $ni->init_private();
 
     # OBS: The TYPE creation must wait. The type object depends on the
     # RDFS interface object in the creation. So it can't be set until
@@ -115,36 +141,15 @@ sub connect
     $file .= ".pm";
     require "$file" or die $!;
 
-    warn "Registring $file\n" if $DEBUG;
-    {   no strict 'refs';
-	$ni->[MODULE_REG] = &{$module."::register"}( $ni, $args );
-    }
+
+    debug "Registring $file\n", 1;
+
+  {   no strict 'refs';
+      $nio->[MODULE_REG] = &{$module."::register"}( $nio, $args );
+  }
+
+    my $ni = RDF::Service::Context->new($nio, $self->[CONTEXT], $self->[WMODEL]);
     return( $ni, 1 );
-}
-
-sub _construct_interface_uri
-{
-    my( $module, $args ) = @_;
-
-    # Generate the URI of interface object. This will have to
-    # change. The URI should be known or availible by request. Not
-    # guessed.  Make a clear distinction between the interface module
-    # resource and the interface resource returned from a connection.
-    #
-    my $uri = URI->new("http://cpan.org/rdf/module/"
-		       . join('/',split /::/, $module));
-
-    if( ref $args eq 'HASH' )
-    {
-	my @query = ();
-	foreach my $key ( sort keys %$args )
-	{
-	    next if $key eq 'passwd';
-	    push @query, $key, $args->{$key};
-	}
-	$uri->query_form(@query);
-    }
-    return $uri->as_string;
 }
 
 sub delete_node
@@ -181,7 +186,7 @@ sub delete_node
 
     die "Model not specified" unless $model;
 
-    foreach my $arc ( @{ $self->get_arcs_list} )
+    foreach my $arc ( @{ $self->arc->list} )
     {
 	my $obj = $arc->obj;
 #	warn "Would delete Obj $obj->[URISTR]\n";
@@ -189,7 +194,7 @@ sub delete_node
 	$obj->delete( $model );
 	$arc->delete( $model );
     }
-    warn "Delete Node $self->[URISTR]\n" if $DEBUG;
+    debug "Delete Node $self->[URISTR]\n", 1;
 
     # Removes the node from the interfaces
     $self->remove( $model ); # TODO: maby check return value?
@@ -205,29 +210,22 @@ sub delete_node
     # node; ie the subscription cache
 
     # Is this an arc?
-    if( my $pred = $self->[PRED] )
-    {
-	my $subj = $self->[SUBJ];
-	my $props = $self->[PROPS]{$pred->[ID]};
-	for( my $i=0; $i<= $#$props; $i++ )
-	{
-	    if( $props->[$i][URISTR] eq $self->[URISTR] )
-	    {
-		splice( @$props, $i, 1 );
-		$i--; # A entry was removed. Compensate
-	    }
-	}
-    }
+    $self->declare_delete_arc;
 
     return( 1, 1 );
 }
+
 
 sub find_node
 {
     my( $self, $i, $uri ) = @_;
 
-    my $obj = $RDF::Service::Cache::node->{$self->[IDS]}{ uri2id($uri) };
-    return $obj;
+    my $obj = $RDF::Service::Cache::node->{$self->[NODE][IDS]}{ uri2id($uri) };
+    return( RDF::Service::Context->new($obj,
+				       $self->[CONTEXT],
+				       $self->[WMODEL]),
+	    1) if $obj;
+    return( undef );
 }
 
 sub service_init_types
@@ -238,18 +236,20 @@ sub service_init_types
     # interface. The Base interface states that all URIs matching a
     # specific pattern are Service objects.
 
-    warn "Initiating types for $self->[URISTR]\n";
+    debug "Initiating types for $self->[NODE][URISTR]\n", 1;
 
     my $pattern = "^".NS_L."/service/[^/#]+\$";
-    if( $self->[URISTR] =~ /$pattern/ )
+    if( $self->[NODE][URISTR] =~ /$pattern/ )
     {
 	# Declare the types for the service
 	#
-	my $c_Resource = $self->get_node(NS_RDFS.'Resource');
-	my $c_Model = $self->get_node(NS_L.'Model');
-	my $c_Service = $self->get_node(NS_L.'Service');
-	my $types = [$c_Service, $c_Model, $c_Resource];
-	$self->declare_self( $self, $types );
+	$self->[NODE]->declare_add_types( $self, [
+	      NS_L.'#Service',
+	      NS_L.'#Model',
+	      NS_L.'#Selection',
+	      NS_RDFS.'Container',
+	      NS_RDFS.'Resource',
+	      ]);
 	return( undef, 1 );
     }
     return undef;
@@ -267,19 +267,18 @@ sub init_types
     die "deprecated";
 
     # Only set Resource for now.
-    warn "Setting type for $self->[URISTR] to Resource\n" if $DEBUG;
+    debug "Setting type for $self->[URISTR] to Resource\n", 1;
 
-    my $c_Resource = $self->get_node(NS_RDFS.'Resource');
-    $self->declare_add_type($i, $c_Resource);
+    $self->[NODE]->declare_add_types($i, [NS_RDFS.'Resource']);
 
     return( undef );
 }
 
 sub desig_literal
 {
-    if( $_[0]->[VALUE] )
+    if( $_[0]->[NODE][VALUE] )
     {
-	return( "'$_[0]->[VALUE]'", 1);
+	return( "'$_[0]->[NODE][VALUE]'", 1);
     }
     else
     {
@@ -290,11 +289,13 @@ sub desig_literal
 
 sub desig_resource
 {
+    debug "T ".$_[0]->types_as_string, 1;
+
     # Change to make method calls
     #
-    return( $_[0]->[LABEL] || 
-	    $_[0]->[NAME] || 
-	    $_[0]->[URISTR] || 
+    return( $_[0]->[NODE][LABEL] || 
+	    $_[0]->[NODE][NAME] || 
+	    $_[0]->[NODE][URISTR] || 
 	    '(anonymous resource)'
 	    , 1);
 }
@@ -307,7 +308,7 @@ sub desig_resource
 # literals.)  But teh method will still return a ref to the list to
 # the Dispatcher.
 
-sub list_model_arcs
+sub arcs_list
 {
     my( $self ) = @_;
 
@@ -315,17 +316,71 @@ sub list_model_arcs
 
     my $arcs = [];
     # Each $part is a Interface object
-    foreach my $part ( @{$self->[CONTENT]} )
+    foreach my $part ( @{$self->[NODE][CONTENT]} )
     {
 	# Only handle interfaces for now.
 	die unless  ref $part eq 'RDF_023::Resource::Interface';
 
-#	warn "Getting arcs for $part->[URI]\n";
+#	warn "Getting arcs for $part->[NODE][URI]\n";
 	# TODO: use wantarray()
 	push @$arcs, @{$part->list_arcs};
     }
 
     return @$arcs;
+}
+
+sub value
+{
+    my( $self ) = @_;
+    $self->init_props unless $self->[NODE][PROPS];
+
+    # TODO: Should return 2
+    return( $_[0]->[NODE][VALUE], 1);
+}
+
+
+sub pred
+{
+    # TODO. Should return 2;
+    return( $_[0]->[NODE][PRED], 1);
+}
+
+sub subj
+{
+    # TODO. Should return 2;
+    return( $_[0]->[NODE][SUBJ], 1);
+}
+
+sub obj
+{
+    # TODO. Should return 2;
+    return( $_[0]->[NODE][OBJ], 1);
+}
+
+
+sub _construct_interface_uri
+{
+    my( $module, $args ) = @_;
+
+    # Generate the URI of interface object. This will have to
+    # change. The URI should be known or availible by request. Not
+    # guessed.  Make a clear distinction between the interface module
+    # resource and the interface resource returned from a connection.
+    #
+    my $uri = URI->new("http://cpan.org/rdf/module/"
+		       . join('/',split /::/, $module));
+
+    if( ref $args eq 'HASH' )
+    {
+	my @query = ();
+	foreach my $key ( sort keys %$args )
+	{
+	    next if $key eq 'passwd';
+	    push @query, $key, $args->{$key};
+	}
+	$uri->query_form(@query);
+    }
+    return $uri->as_string;
 }
 
 

@@ -1,3 +1,124 @@
+2000-12-21  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/doc/TODO: *** empty log message ***
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm:
+	minor changes
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm:
+	 - connect() method changed
+	 - added desig_statement()
+	 - _export_to_ids() copies unchanged data from one IDS cache to another
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Resource.pm:
+	added net_with_ids()
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Dispatcher.pm:
+	 - more validation tests
+	 - use HISTORY to remember the steps in a nested call
+	 - interface responses validated
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm:
+	 - context inherits HISTORY
+	 - added get_node(), get_node_by_id(), could_be_a(), is_known_as_a(), exist_pred()
+	 - bugfixes
+	 - types_as_string() gives more info
+	 - wrapper methods for interface methods added: init...() and store...()
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Constants.pm:
+	 - RUNLEVEL makes startup a special case
+	 - MEMORY is a place for interface to store things in contexts
+	 - HISTORY remember function calles and hinder recursive calling
+	 - added properties LS:name, LS:level, LS:updated and LS:agent
+	 - removed the LS:ns data
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Cache.pm:
+	 - nesting counting not depending on $DEBUG > 0
+	 - many validation testings on debug_start() and debug_end()
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm:
+	 - use RUNLEVEL to make upstart a special case
+	 - use get_node()
+
+	* /cvsroot/wraf/RDF-Service/lib/Wraf/Result.pm:
+	*** empty log message ***
+
+	* /cvsroot/wraf/RDF-Service/bin/tmpl/person_view:
+	Removed debugging data
+
+	* /cvsroot/wraf/RDF-Service/bin/tmpl/person_list: Reset output on error
+
+	* /cvsroot/wraf/RDF-Service/bin/tmpl/header: Resets output on error
+
+	* /cvsroot/wraf/RDF-Service/bin/serv1.pl:
+	 - resets the debug output indentation on exceptions
+	 - option to set service key by name 's' in query string
+	 - initialize session date after DBI connection
+	 - DB initialization includes the properties
+
+2000-12-04  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Cache.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Dispatcher.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm, /cvsroot/wraf/RDF-Service/doc/rdf.sql:
+	 - Fixed type storing bug
+	 - Fixed date bug
+
+2000-12-01  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm:
+	See previous
+
+	* /cvsroot/wraf/RDF-Service/bin/tmpl/person_view, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Cache.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Dispatcher.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Resource.pm, /cvsroot/wraf/RDF-Service/bin/serv1.pl:
+	 - Add types and props to session resource
+	 - Store nonsolid resources on demand
+	 - Tracked down and fixed error that substituted literal value with
+	the literal resource
+
+2000-11-26  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm, /cvsroot/wraf/RDF-Service/doc/rdf.sql, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Cache.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Constants.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Dispatcher.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Resource.pm, /cvsroot/wraf/RDF-Service/bin/tmpl/footer, /cvsroot/wraf/RDF-Service/bin/tmpl/header, /cvsroot/wraf/RDF-Service/bin/tmpl/menu, /cvsroot/wraf/RDF-Service/bin/tmpl/person_add_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_edit_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_list, /cvsroot/wraf/RDF-Service/bin/tmpl/person_view, /cvsroot/wraf/RDF-Service/cgi-bin/client.cgi, /cvsroot/wraf/RDF-Service/cgi-bin/demo.html, /cvsroot/wraf/RDF-Service/cgi-bin/tail.cgi, /cvsroot/wraf/RDF-Service/bin/serv1.pl:
+	 - Remembers if a change has been stored in the interface
+	 - Removed model fields from DBI and constants
+	 - Function for couple person with session
+	 - Storage needs more work...
+
+2000-11-21  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Dispatcher.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Cache.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm:
+	... Again
+
+	* /cvsroot/wraf/RDF-Service/cgi-bin/client.cgi, /cvsroot/wraf/RDF-Service/cgi-bin/.htaccess, /cvsroot/wraf/RDF-Service/doc/TODO:
+	... See last entry
+
+	* /cvsroot/wraf/RDF-Service/bin/serv1.pl, /cvsroot/wraf/RDF-Service/bin/tmpl/footer, /cvsroot/wraf/RDF-Service/README:
+	 - bugfixes for delete
+	 - reuses session object
+	 - bugfix with CGI.pm and POST
+	 - And more...
+
+2000-11-14  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/doc/TODO: Added DB handler item
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/DBI/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm:
+	Reuses the database connection. Release 0.03_01
+
+2000-11-12  aigan  <aigan@jonas>
+
+	* /cvsroot/wraf/RDF-Service/cgi-bin/demo.html, /cvsroot/wraf/RDF-Service/cgi-bin/tail.cgi, /cvsroot/wraf/RDF-Service/doc/ANNOUNCE, /cvsroot/wraf/RDF-Service/doc/scratchpad.txt, /cvsroot/wraf/RDF-Service/lib/RDF/Service/Context.pm, /cvsroot/wraf/RDF-Service/bin/serv1.pl, /cvsroot/wraf/RDF-Service/bin/tmpl/footer, /cvsroot/wraf/RDF-Service/bin/tmpl/header, /cvsroot/wraf/RDF-Service/bin/tmpl/menu, /cvsroot/wraf/RDF-Service/ChangeLog, /cvsroot/wraf/RDF-Service/Makefile.PL, /cvsroot/wraf/RDF-Service/MANIFEST, /cvsroot/wraf/RDF-Service/README:
+	Release-v0_03
+
+	* /cvsroot/wraf/RDF-Service/bin/tmpl/components, /cvsroot/wraf/RDF-Service/bin/tmpl/error, /cvsroot/wraf/RDF-Service/bin/tmpl/footer, /cvsroot/wraf/RDF-Service/bin/tmpl/header, /cvsroot/wraf/RDF-Service/bin/tmpl/js, /cvsroot/wraf/RDF-Service/bin/tmpl/menu, /cvsroot/wraf/RDF-Service/bin/tmpl/person_add_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_edit_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_list, /cvsroot/wraf/RDF-Service/bin/tmpl/person_view, /cvsroot/wraf/RDF-Service/bin/tmpl/test, /cvsroot/wraf/RDF-Service/doc/html/jumptable.html:
+	Moved templates from cgi-bin to bin
+
+	* /cvsroot/wraf/RDF-Service/t/rdf_server.pl, /cvsroot/wraf/RDF-Service/t/w23a.pl, /cvsroot/wraf/RDF-Service/t/w23b.pl:
+	Old testfiles removed
+
+	* /cvsroot/wraf/RDF-Service/bin/serv1.pl, /cvsroot/wraf/RDF-Service/cgi-bin/person.cgi, /cvsroot/wraf/RDF-Service/cgi-bin/rdf.handler, /cvsroot/wraf/RDF-Service/cgi-bin/serv1.pl:
+	serv1.pl moved to bin directory. Old test-files removed
+
+	* /cvsroot/wraf/RDF-Service/lib/RDF/Service/Interface/Base/V01.pm, /cvsroot/wraf/RDF-Service/lib/RDF/Service.pm, /cvsroot/wraf/RDF-Service/cgi-bin/serv1.pl, /cvsroot/wraf/RDF-Service/doc/ANNOUNCE, /cvsroot/wraf/RDF-Service/doc/TODO, /cvsroot/wraf/RDF-Service/README:
+	Preparation for a3
+
 2000-11-12  aigan  <aigan@astral.paranormal.se>
 
 	* /cvsroot/wraf/RDF-Service/bin/tmpl/components, /cvsroot/wraf/RDF-Service/bin/tmpl/error, /cvsroot/wraf/RDF-Service/bin/tmpl/footer, /cvsroot/wraf/RDF-Service/bin/tmpl/header, /cvsroot/wraf/RDF-Service/bin/tmpl/js, /cvsroot/wraf/RDF-Service/bin/tmpl/menu, /cvsroot/wraf/RDF-Service/bin/tmpl/person_add_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_edit_form, /cvsroot/wraf/RDF-Service/bin/tmpl/person_list, /cvsroot/wraf/RDF-Service/bin/tmpl/person_view, /cvsroot/wraf/RDF-Service/bin/tmpl/test, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/components, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/error, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/footer, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/header, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/js, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/menu, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/person_add_form, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/person_edit_form, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/person_list, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/person_view, /cvsroot/wraf/RDF-Service/cgi-bin/tmpl/test, /cvsroot/wraf/RDF-Service/doc/html/jumptable.html:

@@ -3,7 +3,7 @@
 <ul>
  <li><a href="javascript:go('person_add_form')">Add Person</a>
  <li><a href="javascript:go('person_list')">List persons</a>
- <li><a href="javascript:go('menu','initiate_db')">Initiate DB</a>
+ <li><a href="javascript:go('person_list','initiate_db')">Initiate DB</a>
 </ul>
 
 

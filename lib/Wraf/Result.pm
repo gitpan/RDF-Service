@@ -1,4 +1,4 @@
-#  $Id: Result.pm,v 1.1 2000/09/20 17:03:22 aigan Exp $  -*-perl-*-
+#  $Id: Result.pm,v 1.2 2000/12/21 19:33:49 aigan Exp $  -*-perl-*-
 
 package Wraf::Result;
 
@@ -22,6 +22,7 @@ package Wraf::Result;
 use strict;
 use vars qw( $error_types );
 use Data::Dumper;
+use RDF::Service::Cache qw( $Level );
 
 sub new
 {
@@ -53,7 +54,6 @@ sub exception
     my( $self ) = @_;
 
 #    warn("Exception: ".Dumper($@, \@_)."\n");
-
 
     if( $dbi::errstr )
     {

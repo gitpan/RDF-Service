@@ -14,6 +14,7 @@ bin/tmpl/person_edit_form
 bin/tmpl/person_list
 bin/tmpl/person_view
 bin/tmpl/test
+cgi-bin/.htaccess
 cgi-bin/client.cgi
 cgi-bin/demo.html
 cgi-bin/tail.cgi

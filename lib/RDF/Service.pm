@@ -1,4 +1,4 @@
-#  $Id: Service.pm,v 1.15 2000/11/12 18:14:00 aigan Exp $  -*-perl-*-
+#  $Id: Service.pm,v 1.22 2000/12/21 22:04:18 aigan Exp $  -*-perl-*-
 
 package RDF::Service;
 
@@ -22,12 +22,12 @@ use strict;
 use 5.006;
 use RDF::Service::Constants qw( :rdf :namespace :context );
 use RDF::Service::Cache qw( get_unique_id uri2id debug debug_start
-			    debug_end );
+			    debug_end time_string $DEBUG);
 use RDF::Service::Resource;
 use RDF::Service::Context;
 use Data::Dumper;
 
-our $VERSION = 0.03;
+our $VERSION = 0.04;
 
 sub new
 {
@@ -74,16 +74,16 @@ sub new
     # Initialize the level indicator
     $RDF::Service::Cache::Level = 0;
 
-    debug_start( "new RDF::Service");
+    debug_start("new RDF::Service");
 
     if( $uristr )
     {
 	# Must have a Service URI as recognized by the Base find_node
 
 	my $pattern = "^".NS_LD."/service/[^/#]+\$";
-	unless( $uristr =~  /$pattern/ )
+	unless( $uristr =~  m/$pattern/o )
 	{
-	    die "Invalid namespace for Service";
+	    die "Invalid namespace for Service: $uristr";
 	}
     }
     else
@@ -93,9 +93,6 @@ sub new
 	$uristr = NS_LD."/service/".&get_unique_id;
     }
 
-
-    # We would have called $s->init_private(), if there would be
-    # anything to init.
 
     # The service object is not stored in any interface.  The base
     # interface init_types function states that all resources matching
@@ -110,6 +107,7 @@ sub new
 
 
     my $so = RDF::Service::Resource->new($uristr);
+    $so->[RUNLEVEL] = 0; # Startup runlevel
     my $s = RDF::Service::Context->new( $so, {} );
 
     &_bootstrap( $s );
@@ -129,28 +127,20 @@ sub _bootstrap
 
     my $node = $s->[NODE];
 
-    my $base_model = $s->get(NS_LD.'#The_Base_Model');
-    $s->[WMODEL] = $base_model;
-    $s->[WMODEL][WMODEL] = $base_model;
-    $node->[MODEL]{$s->[WMODEL][NODE][ID]} = $base_model;
+    my $base_model = $s->get_node(NS_LD.'#The_Base_Model');
+#    $base_model->[REV_MODEL]{$node->[ID]} = $node;  # Try without...
+    $base_model->[TYPE_ALL] = 1;
+    debug "Changing SOLID to 1 for $base_model->[URISTR] ".
+      "IDS $base_model->[IDS]\n", 3;
+    $base_model->[SOLID] = 1; # nonchanging
+
+    $s->[WMODEL] = $s;
+    $node->[MODEL] = $base_model;
     $node->[TYPE] = {};
     $node->[INTERFACES] = [];
-
-    foreach my $type ( $s->get(NS_LS.'#Service'),
-		       $s->get(NS_LS.'#Model'),
-		       $s->get(NS_LS.'#Selection'),
-		       $s->get(NS_RDFS.'Container'),
-		       $s->get(NS_RDFS.'Resource'),
-		      )
-    {
-	$node->[TYPE]{$type->[NODE][ID]}{$base_model} = 1;
-	$type->[NODE][REV_TYPE]{$node->[ID]}{$base_model} = 1;
-    }
-
-    # All the types for $node is now set
-    #
-    $node->[TYPE_ALL] = 1;
-
+    debug "Changing SOLID to 0 for $node->[URISTR] ".
+      "IDS $node->[IDS]\n", 3;
+    $node->[SOLID] = 0;
 
     my $module = "RDF::Service::Interface::Base::V01";
 
@@ -159,17 +149,40 @@ sub _bootstrap
     $file .= ".pm";
     require "$file";
 
-    {   no strict 'refs';
-	&{$module."::connect"}( $s, undef, $module );
+    {
+	no strict 'refs';
+#	my $base_interface_uri = &{$module."::_construct_interface_uri"}( $module );
+#	my $base_interface = $s->get( $base_interface_uri );
+
+	# NB! The session node is used as the interface.  It will be
+	# replaced during the connection.
+	#
+	debug_start( "connect", 0, $s );
+	&{$module."::connect"}( $s, $s->[NODE], $module );
+	debug_end( "connect", 0, $s );
     }
 
-    # The IDS of $s is now defined; update $s->[WMODEL]
+    # Node has now been updated
     #
-    $base_model->[NODE][IDS] = $s->[NODE][IDS];
-    $base_model->[NODE][JUMPTABLE] = undef;
-    $base_model->[NODE]->init_private;
+    $node = $s->[NODE];
 
+    # The IDS of $s is now defined; update $s->[WMODEL].  We do not
+    # have to do the same thing for $node, since it doesn't is used as
+    # an object above.
+    #
+    $base_model->[IDS] = $node->[IDS];
+    $base_model->[JUMPTABLE] = undef;
 
+    # Save node in cache!
+    #
+#    $RDF::Service::Cache::node->{$node->[IDS]}{ $node->[ID] } = $node;
+#    warn "*** Setting cache($s->[IDS], $s->[ID] ) to $s\n";
+
+    # Add the type
+    #
+    $s->declare_add_types( [NS_LS.'#Service'] );
+
+    $node->[RUNLEVEL] = 1; # Normal runlevel
 }
 
 

@@ -1,4 +1,4 @@
-$Id: TODO,v 1.3 2000/11/12 18:13:37 aigan Exp $
+$Id: TODO,v 1.6 2000/12/21 20:18:55 aigan Exp $
 
 Prototype case one: Address register
 
@@ -15,12 +15,12 @@ DONE  --- (alpha 2)
 DONE  - c/s architecture
 DONE  - callbacks to updated cache on changes in the source
 DONE  --- (alpha 3)
-      - Session metadata
-      - User identification
+DONE  - Reuse DB connections
+DONE  - Session metadata
+DONE  - User identification
       --- (alpha 4)
       - Model authority
       - authenticated change/delete
-      - distributive properties
       --- (alpha 5)
       - minimal SDL general presentation framework
       - minimal inference/translation rules

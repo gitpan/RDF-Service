@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-#  $Id: serv1.pl,v 1.2 2000/11/12 23:25:03 aigan Exp $  -*-perl-*-
+#  $Id: serv1.pl,v 1.8 2000/12/21 22:18:07 aigan Exp $  -*-perl-*-
 
 #=====================================================================
 #
@@ -31,16 +31,17 @@ use CGI;
 use Template 2;
 use FreezeThaw qw( thaw );
 
+# TODO: use FindBin;
 # use FindBin; use lib $FindBin::Bin; # Gives tainted data!
+
 use lib "../lib";
 
 use Wraf::Result;
 use RDF::Service;
 use RDF::Service::Constants qw( :all );
+use RDF::Service::Cache qw( $Level debug get_unique_id reset_level
+			    time_string $DEBUG );
 
-our $VERSION = 0.02;
-
-our $DEBUG = 0;
 our $q = undef;
 our $s = undef;
 
@@ -53,7 +54,7 @@ our $th = Template->new(
 
 
 {
-    my $port=7788;
+    my $port=7789;
 
     # Set up the tcp server. Must do this before chroot.
     my $server= IO::Socket::INET->new(
@@ -73,7 +74,7 @@ our $th = Template->new(
 
     print("Setup complete, accepting connections.\n");
 
-    open STDERR, ">/tmp/RDF-Service.log" or die $!;
+    open STDERR, ">/tmp/RDF-Service-0_04.log" or die $!;
 
   main_loop:
     while (1)
@@ -111,7 +112,7 @@ our $th = Template->new(
 		$select->add($client);
 		NonBlock($client);
 
-		warn "\n\nNew client connected\n" if $DEBUG;
+		warn "\n\nNew client connected\n" if $DEBUG > 3;
 	    }
 	    else
 	    {
@@ -119,7 +120,7 @@ our $th = Template->new(
 		$data='';
 		$rv = $client->recv($data,POSIX::BUFSIZ, 0);
 
-		warn "Read data...\n" if $DEBUG;
+		warn "Read data...\n" if $DEBUG > 3;
 
 		unless (defined $rv && length $data)
 		{
@@ -132,24 +133,24 @@ our $th = Template->new(
 		$inbuffer{$client} .= $data;
 		unless( $length{$client} )
 		{
-		    warn "Length of record?\n" if $DEBUG;
+		    warn "Length of record?\n" if $DEBUG > 3;
 		    # Read the length of the data string
 		    #
 		    if( $inbuffer{$client} =~ s/^(\d+)\x00// )
 		    {
-			warn "Setting length to $1\n" if $DEBUG;
+			warn "Setting length to $1\n" if $DEBUG > 3;
 			$length{$client} = $1;
 		    }
 		}
 
 		if( $length{$client} )
 		{
-		    warn "End of record?\n" if $DEBUG;
+		    warn "End of record?\n" if $DEBUG > 3;
 		    # Have we read the full record of data?
 		    #
 		    if( length $inbuffer{$client} >= $length{$client} )
 		    {
-			warn "The whole length read\n" if $DEBUG;
+			warn "The whole length read\n" if $DEBUG > 3;
 			handle_request( $client, \$inbuffer{$client} );
 			$inbuffer{$client} = '';
 			$length{$client} = 0;
@@ -192,17 +193,17 @@ sub handle_request
 {
     my( $client, $recordref ) = @_;
 
-    my( $me );
-
     my( $value ) = thaw( $$recordref );
+    $q    = $value->[0];
+    %ENV = @{$value->[1]};
 
-#    warn Dumper $value;
-#    return;
+    # We can't have the CGI module trying to read POST data
+    $ENV{'REQUEST_METHOD'} = 'GET';
 
-    ($q, $me ) = @$value;
+    my( $me ) = $ENV{'SCRIPT_NAME'} =~ m!/([^/]+)$!;
 
 
-    if( $DEBUG > 2 )
+    if( $DEBUG > 8 )
     {
 	$client->send( $q->header );
 	$client->send( "<h1>Got something!</h1>" );
@@ -216,26 +217,12 @@ sub handle_request
     }
 
 
-
-
-    warn "Constructing RDF::Service object\n";
+    warn "Constructing RDF::Service object\n" if $DEBUG;
     my $offset = &dlines();
-
-    $s = new RDF::Service( NS_LD."/service/R1" );
-
-#    $s->connect("RDF::Service::Interface::DBI::V01",
-#	      {
-#		  connect => "dbi:Pg:dbname=wraf_v01b",
-#		  name =>    "wwwdata",
-#	      });
-
-    $s->connect("RDF::Service::Interface::DBI::V01",
-	      {
-		  connect => "dbi:Pg:dbname=wraf_v01a",
-		  name =>    "wwwdata",
-	      });
-
     my $result = new Wraf::Result;
+    my $s_cookie = $q->cookie('wraf_session');
+    $Level = 0;
+    $s = &get_session( $s_cookie );
 
     my $params =
     {
@@ -243,7 +230,7 @@ sub handle_request
 	'me'       => $me,
 	'result'   => $result,
 	'ENV'      => \%ENV,
-	'VERSION'  => $VERSION,
+	'VERSION'  => $RDF::Service::Resource::VERSION,
 	's'        => $s,
 
 	'NS_LS'     => NS_LS,
@@ -252,8 +239,10 @@ sub handle_request
 	'NS_RDFS'  => NS_RDFS,
 
 	'dump'    => \&Dumper,
+	'reset'   => \&reset_level,
 	'offset'  => $offset,
 	'dlines'  => \&dlines,
+        'warn'    => sub { debug "NOTE: $_[0]\n", 1; '' },
     };
 
 
@@ -277,19 +266,23 @@ sub handle_request
     #
     my $handler = "";
     $handler = $q->param('previous') if $result->{'error'};
-    $handler ||= ($q->param('handler')||'menu');
+    $handler ||= ($q->param('handler')||'person_list');
     $params->{'handler'} = $handler;
-    warn "$$: Porcessing template $handler\n" if $DEBUG;
+    warn "Porcessing template $handler\n" if $DEBUG > 3;
 
 
     # Construct and return the response (handler) page
     #
-    warn "Returning page\n";
+    warn "\n********************\n".
+      "*** Returning page\n".
+	"********************\n\n" if $DEBUG;
+    $Level = 0;
     $client->print( $q->header );
     my $handler_file = $handler; #.'.html';
     $th->process($handler_file, $params, $client)
       or do
       {
+	  &reset_level;
 	  warn "$$: Oh no!\n" if $DEBUG; #Some error sent to browser
 	  my $error = $th->error();
 	  if( ref $error )
@@ -308,16 +301,52 @@ sub handle_request
       };
 
 
-    warn "Done!\n\n";
+    warn "Done!\n\n" if $DEBUG;
 }
 
+sub get_session
+{
+    my( $session_key ) = @_;
+
+    our %session;
+
+    if( $session{$session_key} )
+    {
+	warn "Found old session $session_key\n" if $DEBUG;
+	return $session{$session_key};
+    }
+    else
+    {
+	warn "New session $session_key\n" if $DEBUG;
+	$session_key =~ s/[^\w\-\.]//g;
+
+	$session_key = $q->param('s') if $q->param('s');
+
+	my $session_res = new RDF::Service( NS_LD."/service/$session_key" );
+
+	$session_res->connect("RDF::Service::Interface::DBI::V01",
+			    {
+				connect => "dbi:Pg:dbname=wraf_v01a",
+				name =>    "wwwdata",
+			    });
+	$session_res->init_rev_subjs;
+	unless( $session_res->exist_pred( NS_LS.'#updated' ) )
+	{
+	    $session_res->set_props(
+		{ NS_LS.'#updated' => [time_string()] }, 1 );
+	}
+
+	return $session{$session_key} = $session_res;
+    }
+
+}
 
 ########  Action functions  #########################
 
 sub do_person_add
 {
-    my $model = $s->get_model(NS_LD.'#M1');
-#    my $model = $s->create_model();
+#    my $model = $s->get_model(NS_LD.'#M1');
+    my $model = $s;
 
     my $person = $model->get();
 
@@ -345,50 +374,64 @@ sub do_person_add
 sub do_person_delete
 {
     my $r_person = $q->param('r_person') or die "No node specified";
-    my $model = $s->get_model(NS_LD.'#M1');
+#    my $model = $s->get_model(NS_LD.'#M1');
+    my $model = $s;
     my $person = $model->get($r_person);
-    $person->delete();
-    return "Deleted person";
+    if( $person->delete_node_cascade() )
+    {
+	return "Deleted person";
+    }
+    else
+    {
+	return "Person NOT deleted";
+    }
 }
 
 sub do_initiate_db
 {
     my $model = $s->get_model(NS_LD.'#M1');
-#    my $model = $s->create_model();
 
-    my $c_person = $model->get(NS_LD.'/Class#Person');
-    $c_person->set( [NS_RDFS.'Class'] );
+    $model->get(NS_LD.'/Class#Person')->set( [NS_RDFS.'Class'] );
+    $model->get(NS_LD.'/Property#first_name')->set( [NS_RDF.'Property'] );
+    $model->get(NS_LD.'/Property#last_name')->set( [NS_RDF.'Property'] );
 
     return "DB initiated";
 }
 
 sub do_person_edit
 {
-    warn "*** get person\n";
     my $r_person = $q->param('r_person') or die "No node specified";
-    my $person = $s->get($r_person);
-    warn "*** get model\n";
-    my $model = $s->get_model(NS_LD.'#M1');
+#    my $model = $s->get_model(NS_LD.'#M1');
+    my $model = $s;
+    my $person = $model->get($r_person);
 
     my $r_fn = $q->param('r_fn') or die "No first name specified";
     my $r_ln = $q->param('r_ln') or die "No last name specified";
 
-    warn "*** Set fn\n";
     $person->arc_obj(NS_LD.'/Property#first_name')->li->set_literal(\$r_fn);
-    warn "*** Set ln\n";
     $person->arc_obj(NS_LD.'/Property#last_name')->li->set_literal(\$r_ln);
-
-    warn "*** DONE\n";
 
     return "Person edited";
 }
 
-use Fcntl;
-our $llines = 0;
-our $loffset = 0;
+sub do_person_login
+{
+    my $r_person = $q->param('r_person') or die "No node specified";
+    my $model = $s;
+    my $person = $model->get($r_person);
+
+    $s->set_props({NS_LS.'#agent' => [$person]});
+
+    return "Logging in";
+}
+
 sub dlines
 {
-    open FILE, "/tmp/RDF-Service.log" or die $!;
+    open FILE, "/tmp/RDF-Service-0_04.log" or die $!;
+
+    use Fcntl;
+    our $llines = 0;
+    our $loffset = 0;
 
     unless( seek FILE, $loffset, SEEK_SET )
     {

@@ -16,20 +16,20 @@ DOCUMENTATION
 
 
 PREREQUISITIES
-    Perl v5.6 with Template v2, Time::Hires, CGI, FreezeThaw, DBI,
-    DBD::Pg, URI and PostgreSQL
+    Perl v5.6 with modules Template v2, Time::Hires, CGI, FreezeThaw, DBI,
+    DBD::Pg and URI.  PostgreSQL.  Apache v1.3 with mode_usertrack.
 
 
 INSTALL
     The test program bin/serv1.pl will look for the libraries in
-    ../lib (relative to the executable).  Create the databases
+    ../lib (relative to the current directory).  Create the databases
     wraf_v01a in PostgreSQL and initiate it with the tables in
-    doc/rdf.sql
+    doc/rdf.sql  Do not 'make install'.
 
 
 TEST EXAMPLE
     Make the CGI program cgi-bin/client.cgi executable from a webserver.
-    Start bin/serv1.pl and be amazed at the amount of work needed
+    Start ./serv1.pl in bin and be amazed at the amount of work needed
     for a simple stupid list of names.  Use cgi-bin/demo.html as a
     starting point.
 

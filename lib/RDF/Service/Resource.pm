@@ -1,4 +1,4 @@
-#  $Id: Resource.pm,v 1.19 2000/11/10 18:41:37 aigan Exp $  -*-perl-*-
+#  $Id: Resource.pm,v 1.22 2000/12/21 20:07:48 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Resource;
 
@@ -23,7 +23,7 @@ use strict;
 use RDF::Service::Dispatcher;
 use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( interfaces uri2id list_prefixes
-			    get_unique_id id2uri debug $DEBUG );
+			    get_unique_id id2uri debug $DEBUG ); #);
 use Data::Dumper;
 use Carp qw( cluck confess croak carp );
 
@@ -33,9 +33,14 @@ sub new_by_id
     return new($_[0], undef, $_[1]);
 }
 
+sub new_with_ids
+{
+    return new($_[0], undef, undef, $_[1]);
+}
+
 sub new
 {
-    my( $proto, $uri, $id ) = @_;
+    my( $proto, $uri, $id, $ids ) = @_;
 
     # This constructor shouls only be called from get_node, which
     # could be called from find_node or create_node.  get_node will
@@ -62,17 +67,27 @@ sub new
 	$self->[IDS] = $proto->[IDS];
     }
 
+    if( $ids )
+    {
+	$self->[IDS] = $ids;
+    }
 
     if( $uri )
     {
 	$self->[URISTR] = $uri or die "No URI for $self";
 	$self->[ID] = uri2id( $self->[URISTR] );
     }
-    else
+    elsif( $id )
     {
 	$self->[URISTR] = id2uri($id);
 	$self->[ID] = $id;
     }
+    else
+    {
+	$self->[ID] = $proto->[ID];
+	$self->[URISTR] = $proto->[URISTR];
+    }
+
     $self->[TYPE] = {};
     $self->[TYPE_ALL] = undef;
     $self->[REV_TYPE] = {};
@@ -84,6 +99,10 @@ sub new
     $self->[REV_OBJ] = {};
     $self->[REV_OBJ_ALL] = undef;
 
+    debug "Changing SOLID to 0 for $self->[URISTR] ".
+      "IDS $self->[IDS]\n", 3;
+    $self->[SOLID] = 0;
+
     $self->[JUMPTABLE] = undef;
 
     $self->[NS] = undef;
@@ -91,11 +110,13 @@ sub new
     $self->[LABEL] = undef;
 
     $self->[PRIVATE] = {};
-    $self->[MODEL] = {};
+    $self->[MODEL] = undef;
 
     $self->[ALIASFOR] = undef;
 
     $self->[JTK] = "--no value--";
+
+    $self->[RUNLEVEL] = 1;
 
     return $self;
 }
@@ -123,22 +144,6 @@ sub find_prefix_id
     }
 
     die "Prefixlist failed to return at least ''\n";
-}
-
-sub init_private
-{
-    my( $self ) = @_;
-    #
-    # Set up the private space for all the used interfaces
-
-    # This could be called multipple times
-
-#    cluck " *** init_private *** \n";
-
-    foreach my $interface ( @{interfaces( $self->[IDS] )} )
-    {
-	$self->[PRIVATE]{$interface->[ID]} ||= {};
-    }
 }
 
 

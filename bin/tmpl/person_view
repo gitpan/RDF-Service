@@ -6,8 +6,7 @@
   [% TRY %]
     [% person.arc_obj("${NS_LD}/Property#first_name").li.value %]
     [% person.arc_obj("${NS_LD}/Property#last_name").li.value %]
-  [% CATCH %]
-    [% CLEAR %] A person without a name
+  [% CATCH; CLEAR; reset %] A person without a name
   [% END %]
 </h2>
 
@@ -16,13 +15,29 @@
   <dt>[% pred.desig %]</dt>
   <dd>
     <ol>
-    [% FOREACH obj = person.arc_obj(pred).list %]
-      <li>[% obj.desig %]</li>
+    [% FOREACH arc = person.arc(pred).list %]
+      <li>$arc.obj.desig
+	<ul>
+	  <li>
+                  [% TRY %]
+                     Date: [% arc.model.arc_obj("${NS_LS}#updated").li.value %]
+                  [% CATCH; CLEAR; reset %]
+                     No date for model: $error.info
+                  [% END %]
+          </li>
+	  <li>Agent: 
+            [% TRY %]
+              [% agent = arc.model.arc_obj("${NS_LS}#agent").li %]
+              [% agent.arc_obj("${NS_LD}/Property#first_name").li.value %]
+              [% agent.arc_obj("${NS_LD}/Property#last_name").li.value %]
+            [% CATCH; CLEAR; reset %]
+              Unknown: $error.info
+            [% END %]
+          </li>
+        </ul>
+      </li>
     [% END %]
     </ol>
   </dd>
 [% END %]
 </dl>
-
-<p><a href="$me">Menu</a></p>
-

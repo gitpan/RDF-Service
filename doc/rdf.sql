@@ -1,5 +1,5 @@
 -- Wraf DBI Interface V01
--- $Id: rdf.sql,v 1.4 2000/09/26 19:45:22 aigan Exp $
+-- $Id: rdf.sql,v 1.6 2000/12/04 09:43:46 aigan Exp $
 
 
 DROP SEQUENCE node_id_seq;
@@ -7,7 +7,7 @@ DROP SEQUENCE uri_id_seq;
 DROP TABLE node;
 DROP TABLE type;
 DROP TABLE distr;
-
+DROP TABLE uri;
 
 CREATE SEQUENCE node_id_seq;
 CREATE SEQUENCE uri_id_seq;
@@ -79,19 +79,6 @@ CREATE TABLE node
 
     member               int4, -- uri
 
-
-    -- model -- (updated)
-    --
-    -- This is a special node introducing some extra properties.  The
-    -- final properties has not been decided upon. There will be one
-    -- disitnct record for a specific model per model model (that is:
-    -- the origin of the statement about the model).
-
-    updated		 timestamp, -- The node is a model if this is defined
-    readonly		 bool,
-    agent		 int4, -- the person/organization stating the model
-    source		 int4, -- URI of the service giving the model
-
     -- literal -- (isliteral)    
     --
     -- If the blob is not null, the value should be a text version of
@@ -152,7 +139,7 @@ CREATE TABLE type
     node		 int4 NOT NULL,
     type		 int4 NOT NULL,
     model		 int4 NOT NULL,
-    fact		 bool NOT NULL,
+    fact		 bool,       -- deprecated
     PRIMARY KEY ( node, type, model )
 );
 CREATE INDEX type_node_idx ON type ( node );

@@ -18,4 +18,5 @@
 </table>
 
 <input type="hidden" name="r_person" value="$person.uri">
-<input type="button" OnClick="go('menu','person_edit')" value=" Edit  ">
+<input type="button" OnClick="javascript:go('person_list','person_edit')" value=" Edit  ">
+

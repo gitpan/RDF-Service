@@ -21,11 +21,11 @@ print <<"EOT;";
     </title>
   </head>
   <body>
-    <h1>tail -n $row RDF-Service.log</h1>
+    <h1>tail -n $row RDF-Service-0_04.log</h1>
     <pre>
 EOT;
 
-open FILE, "/usr/bin/tail -n $row /tmp/RDF-Service.log |" or die $!;
+open FILE, "/usr/bin/tail -n $row /tmp/RDF-Service-0_04.log |" or die $!;
 while( my $row = <FILE> )
 {
     $row =~ s/&/&amp;/g;

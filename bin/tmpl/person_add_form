@@ -5,4 +5,4 @@
   <tr><td>Last name  <td><input name="r_ln">
 </table>
 
-<input type="button" OnClick="go('menu','person_add')" value=" Create  ">
+<input type="button" OnClick="javascript:go('person_list','person_add')" value=" Create  ">

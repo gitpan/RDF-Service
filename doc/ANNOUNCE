@@ -1,16 +1,16 @@
-The third alpha release of RDF::Service from the Wraf project
+The fourth alpha release of RDF::Service from the Wraf project
 
         http://www.uxn.nu/wraf/
 
 has entered CPAN as
-  file: $CPAN/authors/id/J/JO/JONAS/RDF-Service-0.03.tar.gz
+  file: $CPAN/authors/id/J/JO/JONAS/RDF-Service-0.04.tar.gz
   size: ??? bytes
    md5: ???
 
 
 CHANGES
-    * clinet/server architecture
-    * changes updates all cached data
+    * Session metadata includes the acting person
+    * Support for changing IDS without saving added data
     * many more changes and bugfixes
 
 

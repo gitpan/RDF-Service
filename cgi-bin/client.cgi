@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-#  $Id: client.cgi,v 1.2 2000/10/25 14:23:03 aigan Exp $  -*-perl-*-
+#  $Id: client.cgi,v 1.4 2000/11/26 21:27:27 aigan Exp $  -*-perl-*-
 
 #=====================================================================
 #
@@ -28,16 +28,14 @@ use FreezeThaw qw( freeze );
 my $q = new CGI;
 my $sock = new IO::Socket::INET (
       PeerAddr => 'localhost',
-      PeerPort => '7788',
+      PeerPort => '7789',
       Proto => 'tcp',
      );
 die "Could not create socket: $!\n" unless $sock;
 
 #warn "Established connection to server\n";
 
-my( $me ) = $0 =~ m!/([^/]+)$!; # The name of the program
-
-my $value = freeze [ $q, $me ];
+my $value = freeze [ $q, [%ENV], ];
 my $length = length $value;
 print $sock "$length\x00$value";
 

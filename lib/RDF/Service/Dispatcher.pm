@@ -1,4 +1,4 @@
-#  $Id: Dispatcher.pm,v 1.19 2000/11/10 18:41:37 aigan Exp $  -*-perl-*-
+#  $Id: Dispatcher.pm,v 1.24 2000/12/21 20:06:19 aigan Exp $  -*-perl-*-
 
 package RDF::Service::Dispatcher;
 
@@ -19,15 +19,20 @@ package RDF::Service::Dispatcher;
 #=====================================================================
 
 use strict;
-use vars qw( %JumpJumpTable );
+use base 'Exporter';
+use vars qw( %JumpJumpTable  @EXPORT_OK %EXPORT_TAGS );
 use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( interfaces uri2id debug $DEBUG
-			  debug_start debug_end );
+			  debug_start debug_end ); #);
 use Data::Dumper;
 use Carp;
 
 # Every resource can only belong to one dispatcher. This should change
 # in a future version.
+
+{
+    @EXPORT_OK = ( 'go' );
+}
 
 sub go
 {
@@ -35,8 +40,38 @@ sub go
 
     my $node = $self->[NODE];
 
-#    ref $node->[MODEL] eq 'RDF::Service::Context'
-#      or confess "Bad model ($node->[MODEL])";
+
+
+    if( $DEBUG )
+    {
+	unless( ref( $self ) eq 'RDF::Service::Context' )
+	{
+	    confess "Called with invalid object: $self";
+	}
+	if( $node->[MODEL] )
+	{
+	    ref $node->[MODEL] eq 'RDF::Service::Resource'
+	      or confess "Bad model ($node->[MODEL])";
+	}
+	if( $node->[VALUE] )
+	{
+	    unless( ref( $node->[VALUE]) eq 'SCALAR')
+	    {
+		confess "Bad value for $node->[URISTR] ( ".
+		  ref($node->[VALUE])." ne 'SCALAR' )";
+	    }
+	}
+	unless( length( $node->[IDS] ) )
+	{
+	    confess "No IDS" if $node->[RUNLEVEL];
+	}
+	unless( ref($self->[HISTORY]) eq 'ARRAY' )
+	{
+	    confess "Malformed HISTORY: $self->[HISTORY]";
+	}
+    }
+
+
     my $uri = $node->[URISTR] or
       confess "Call to $call from anonymous obj";
 
@@ -55,22 +90,12 @@ sub go
 
 	    # Set the first type: Resource
 	    # TODO: Determine the model for this type statement
+	    # TODO: Make all things type resource implicitly!
 	    #
 	    my $c_resource = $self->get( NS_RDFS.'Resource' )
 	      or die "Oh no!!!";
-	    my $model_node_id = $self->[WMODEL][NODE][ID]
-	      or do
-	      {
-		  warn "Oh no!!\n";
-		  warn "While dispatching $call\n";
-		  warn "  for $self->[NODE][URISTR]\n";
-		  warn "WMODEL: $self->[WMODEL]\n";
-		  warn "Mnode: $self->[WMODEL][NODE]\n";
-		  warn "$self->[WMODEL][NODE][ID]\n";
-		  confess;
-	      };
-	    $node->[TYPE]{$c_resource->[NODE][ID]}{$model_node_id}=1;
-#	    $self->[NODE][TYPES][0] = $self->get( NS_RDFS.'Resource' );
+	    my $model_id = uri2id(NS_RDFS);
+	    $node->[TYPE]{$c_resource->[NODE][ID]}{$model_id}=2;
 
 	    if(not defined $JumpJumpTable{$prefix_key})
 	    {
@@ -101,7 +126,7 @@ sub go
 	    # models are
 	    foreach my $type_id ( keys %{$node->[TYPE]} )
 	    {
-		my $type = $self->get_node_by_id( $type_id );
+		my $type = $self->get_context_by_id( $type_id );
 		# TODO: Check that at least one node declared this
 		# type
 		debug "..$type->[NODE][ID] : $type->[NODE][URISTR]\n";
@@ -124,7 +149,7 @@ sub go
 	$node->[JUMPTABLE] = $JumpJumpTable{$key};
 	$node->[JTK] = $key;
 
-	debug_end("select_jumptable");
+	debug_end("select_jumptable", ' ', $self);
     }
 
 
@@ -137,15 +162,29 @@ sub go
 	# TODO: If call not found: treat this as a property and maby
 	# as an dynamic property
 
+
+	my $call_key = "$call $self->[NODE] @args";
+	foreach( @{$self->[HISTORY]} )
+	{
+	    if( $_ eq $call_key )
+	    {
+		debug "Recursive call '$call_key' skipped", 2;
+		return 0;
+	    }
+	}
+#	warn "---<<< called $call_key >>>---\n";
+	push @{$self->[HISTORY]}, $call_key;
+
+
 	debug "Dispatching $call...\n", 2;
 
 	# Return a object or a list ref.
 	#  Arg 1: the return value
 	#  Arg 2: Action
-	#         undef = Ignore this result; call next
+	#         0     = Ignore this result; call next
 	#         1     = Final; Return result
 	#         2     = Part; Append and call next
-	#         3     = Successful. Call next
+	#         3     = Successful. Call next. Return 1
 
 	my $success = 0;
 	my $result = [];
@@ -153,6 +192,8 @@ sub go
 
 	for( my $i=0; $i<= $#$coderef; $i++ )
 	{
+	    next if $result_type == 1;
+
 	    debug_start( $call, $i, $self );
 	    debug "..Calling $coderef->[$i][1][URISTR]\n", 2;
 
@@ -161,61 +202,70 @@ sub go
 						       $coderef->[$i][1],
 						       @args);
 
-
 	    if( not defined $action )
 	    {
 		die "Malformed return value from $call ".
-		    "in $coderef->[$i][1][URISTR]\n" if defined $res;
+		  "in $coderef->[$i][1][URISTR]\n".
+		    "    ($res, $action)\n";
+	    }
+
+	    $result_type ||= $action;
+	    if( $action and $result_type != $action )
+	    {
+		die "Mismatch in returned result types";
+	    }
+
+	    if( $action == 0 )
+	    {
+		# Do nothing
 	    }
 	    elsif( $action == 1 )
 	    {
-		debug_end( $call, $i );
-		return $res;
+		$result = $res;
 	    }
 	    elsif( $action == 2 )
 	    {
-		if( not defined $result_type)
-		{
-		    # This is the first pat. No copying needed
-		    $result = $res;
-		}
-		else
-		{
-		    # The first iterface decides the result type
-		    $result_type ||= 2;
-		    push @$result, @$res;
-		}
+		push @$result, @$res;
 	    }
 	    elsif( $action == 3)
 	    {
-		$success += 1;
+		confess "Result undefined for call $call " unless defined $res;
+		$success += $res;
 	    }
 	    else
 	    {
 		confess "Action ($action) not implemented";
 	    }
-	    debug_end( $call, $i );
+	    debug_end( $call, $i, $self );
 	}
 
-#	if( $call eq 'init_types' )
-#	{
-#	    my @types = map "\t$_->[NODE][URISTR]\n",
-#	      @{$self->[NODE][TYPES]};
-#	    warn("\nTypes for $uri\n@types\n");
-#	}
+	# Falling back one step  (not one LEVEL)
+	pop @{$self->[HISTORY]};
 
-	if( $result_type == 2 )
+
+	if( $result_type == 0 )
+	{
+	    return 0;
+	}
+	elsif( $result_type == 1 )
 	{
 	    return $result;
 	}
+	elsif( $result_type == 2 )
+	{
+	    return $result;
+	}
+	elsif( $result_type == 3 )
+	{
+	    return 1 if $success;
+	    return 0;
+	}
 	else
 	{
-	    return $success;
+	    die "Oh nooo!!!!\n";
 	}
     }
 
-#    warn " Dumping info for $self\n";
-#    warn $self->to_string;
 
     my $types_str = $self->types_as_string;
     $node->[JTK] ||= "--no JTK--";
@@ -252,13 +302,13 @@ sub create_jumptable
     # Iterate through every interface and type.
     foreach my $interface ( @{interfaces( $node->[IDS] )} )
     {
-	debug "..I ".$interface->[URISTR]."\n", 2;
+	debug "..I ".$interface->[URISTR]."\n", 5;
 	foreach my $domain ( sort {length($b) <=> length($a)}
 			     keys %{$interface->[MODULE_REG]} )
 	{
 	    next if $node->[URISTR] !~ /^\Q$domain/;
 
-	    debug "....D $domain\n", 2;
+	    debug "....D $domain\n", 5;
 
 	    my $domain_reg = $interface->[MODULE_REG]{$domain};
 	    foreach my $type ( @{$self->type_orderd_list} )
@@ -266,10 +316,10 @@ sub create_jumptable
 #		warn "checking $type->[URISTR]...\n";
 		if( defined( my $jt = $domain_reg->{ $type->[NODE][URISTR]} ))
 		{
-		    debug "......T $type->[NODE][URISTR]\n", 2;
+		    debug "......T $type->[NODE][URISTR]\n", 5;
 		    foreach my $func ( keys %$jt )
 		    {
-			debug "........F $func()\n", 2;
+			debug "........F $func()\n", 5;
 			# Add The coderefs for this type
 			foreach my $coderef ( @{$jt->{$func}} )
 			{
@@ -283,7 +333,7 @@ sub create_jumptable
 	}
     }
 
-    debug_end( "create_jumptable" );
+    debug_end( "create_jumptable", ' ', $self );
 
     # Insert the jumptable in shared memory
     $JumpJumpTable{$key}=$entry;

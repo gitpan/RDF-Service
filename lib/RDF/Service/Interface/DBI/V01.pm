@@ -1,4 +1,4 @@
-#  $Id: V01.pm,v 1.22 2000/11/10 18:41:37 aigan Exp $  -*-cperl-*-
+#  $Id: V01.pm,v 1.29 2000/12/21 22:04:18 aigan Exp $  -*-cperl-*-
 
 package RDF::Service::Interface::DBI::V01;
 
@@ -22,8 +22,6 @@ use strict;
 use DBI;
 #use POSIX;
 #use Time::HiRes qw( time );
-use Time::Object;
-use Date::Parse;
 use vars qw( $prefix $interface_uri @node_fields );
 use RDF::Service::Constants qw( :all );
 use RDF::Service::Cache qw( get_unique_id uri2id id2uri debug $DEBUG );
@@ -40,9 +38,8 @@ $interface_uri = "org.cpan.RDF.Interface.DBI.V01";
 
 @node_fields = qw( id uri iscontainer isprefix
 	     label aliasfor
-	     pred distr subj obj fact model
+	     pred distr subj obj model
 	     member
-	     updated readonly agent source
 	     isliteral lang value );
 
 
@@ -59,7 +56,7 @@ sub register
 	RaiseError => 0,
     };
 
-    my $dbh = ( DBI->connect( $connect, $name, $passwd, $dbi_options ) );
+    my $dbh = ( DBI->connect_cached( $connect, $name, $passwd, $dbi_options ) );
 
 
     die "Connect to $connect failed\n" unless $dbh;
@@ -89,12 +86,10 @@ sub register
 	    },
 	    NS_LS.'#interface' =>
 	    {
-		#'list_arcs' => [\&list_arcs],
 	    },
 	    NS_LS.'#Model' =>
 	    {
-		'create_model'    => [\&create_model],
-		'add_arc'        => [\&add_arc],
+#		'add_arc'        => [\&add_arc],
 		'find_arcs_list' => [\&find_arcs_list],
 	    },
 	    NS_RDFS.'Resource'   =>
@@ -104,10 +99,9 @@ sub register
 		'init_rev_objs'  => [\&init_rev_objs],
 		'name'           => [\&name],
 		'find_node'      => [\&find_node],
-		'create_literal' => [\&create_literal],
 		'store_types'    => [\&store_types],
 		'store_props'    => [\&store_props],
-		'update_node'    => [\&update_node],
+		'store_node'     => [\&store_node],
 		'remove'         => [\&remove],
 		'remove_types'   => [\&remove_types],
 		'remove_props'   => [\&remove_props],
@@ -154,7 +148,7 @@ sub find_node
     $sth->finish; # Release the handler
 
     return( $obj, 1 ) if defined $obj;
-    return undef;
+    return( undef, 0 );
 }
 
 sub find_arcs_list
@@ -167,53 +161,19 @@ sub find_arcs_list
     die "Not implemented";
 }
 
-sub objects_list   ### DEPRECATED
-{
-    my( $self, $i ) = @_;
-
-    my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
-
-    my $sth = $dbh->prepare_cached("
-              select node
-              from type
-              where type = ?
-              ");
-
-    # TODO: expand the type list to all subtypes that explicitly is
-    # the type. Also make special exceptions for types stored implicit
-    # or are specially handled.
-    #
-    my $types = [ $self ];
-
-    my $objects = [];
-
-    foreach my $type ( @$types )
-    {
-	my $r_type = &_get_id( $type, $i );
-	$sth->execute( $r_type );
-	while( my($r_node) = $sth->fetchrow_array )
-	{
-	    # TODO: Inline the _get_node() functionality in order to
-	    # eliminate all the DBI queries for the individual
-	    # resources.
-
-	    push @$objects, &_get_node( $r_node, $self, $i );
-	}
-	$sth->finish;
-    }
-
-    return( $objects, 2 );
-}
-
 sub name
 {
     # Will give the part of the URI following the 'namespace'
     die "not implemented";
 }
 
-sub add_arc
+sub add_arc  ## DEPRECATED
 {
     my( $self, $i, $uristr, $pred, $subj, $obj ) = @_;
+
+    # Why is this needed? Use store_props!
+
+    die "deprecated";
 
     # Assuems that the arc does not exist
 
@@ -253,13 +213,8 @@ sub add_arc
     $p{'distr'}       = 'false';
     $p{'subj'}        = &_get_id( $arc->subj, $i);
     $p{'obj'}         = &_get_id( $arc->obj, $i);
-    $p{'fact'}        = 'true';
-    $p{'model'}       = &_get_id( $arc->model, $i);
+    $p{'model'}       = &_get_id( $arc->[WMODEL][NODE], $i);
     $p{'member'}      = undef;
-    $p{'updated'}     = undef;
-    $p{'readonly'}    = undef;
-    $p{'agent'}       = undef;
-    $p{'source'}      = undef;
     $p{'isliteral'}   = 'false';
     $p{'lang'}        = undef;
     $p{'value'}       = undef;
@@ -281,12 +236,13 @@ sub init_rev_subjs
     # TODO: Use the constraint
 
     $self->[NODE][TYPE_ALL] or $self->init_types;
+    $self->[NODE][TYPE_ALL] ||= 1;
 
     # TODO: Should props be undef if type changes?
 
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
 
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
 
     # TODO: Also read all the other node data
 
@@ -320,13 +276,12 @@ sub init_rev_subjs
 	my $pred   = $self->get( $r->{'pred'} );
 	my $subj   = $self;
 	my $obj    = $self->get( $r->{'obj'} );
-	my $model  = $self->get( $r->{'model'} );
+	my $model  = $self->get( $r->{'model'} )->[NODE];
 	debug "..Found a $pred->[NODE][URISTR]\n", 1;
 
-	$subj->declare_add_prop( $pred, $obj, $r->{'arc'}, $model );
+	$subj->declare_add_prop( $pred, $obj, $r->{'arc'}, $model, 1 );
     }
 
-    $self->[NODE][REV_SUBJ_ALL] = 1;
 
     return( 1, 3 );
 }
@@ -342,10 +297,11 @@ sub init_rev_objs
 
 
     $self->[NODE][TYPE_ALL] or $self->init_types;
+    $self->[NODE][TYPE_ALL] ||= 1;
 
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
 
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
 
     # TODO: Also read all the other node data
 
@@ -384,10 +340,8 @@ sub init_rev_objs
 	my $model  = $self->get( $r->{'model'} );
 	debug "..Found a $pred->[NODE][URISTR]\n", 1;
 
-	$subj->declare_add_prop( $pred, $obj, $r->{'arc'} );
+	$subj->declare_add_prop( $pred, $obj, $r->{'arc'}, $model, 1 );
     }
-
-    $self->[NODE][REV_OBJ_ALL] = 1;
 
     return( 1, 3 );
 }
@@ -400,26 +354,42 @@ sub init_types
     # record
 
     # TODO: Get the implicite types from subClassOf (Handled by
-    # RDFS_200001)
+    # Base/V01)
 
+    if( $DEBUG )
+    {
+	debug "Init types for $self->[NODE][URISTR]\n", 2;
 
-    debug "Init types for $self->[NODE][URISTR]\n", 2;
+	unless( ref $self eq "RDF::Service::Context" )
+	{
+	    die "Wrong type for self: $self";
+	}
+
+	unless( ref $i eq "RDF::Service::Resource" )
+	{
+	    die "Wrong type for i: $i";
+	}
+
+	die "No node for self" unless $self->[NODE];
+
+	die "No private for self_node" unless $self->[NODE][PRIVATE];
+    }
 
     # Look for the URI in the DB.
     #
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
-    $p{'uri'} ||= &_get_id($self, $i);
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
+    $p->{'uri'} ||= &_get_id($self->[NODE], $i);
 
-    my $types = [];
+    my $node = $self->[NODE];
 
   Node:
     {
 	# TODO: Reuse cols variable and sth
 	my @cols = qw( id iscontainer isprefix label aliasfor
-		       model pred distr subj obj fact member updated
-		       readonly agent source isliteral lang value blob
-		       );
+		       model pred distr subj obj member isliteral
+		       lang value blob );
+
 	my $fields = join ", ", @cols;
 
 	my $sth_node = $dbh->prepare_cached("
@@ -431,11 +401,19 @@ sub init_types
 	my $true = '1';
 	my  $false = '0';
 
-	$sth_node->execute( $p{'uri'} );
+	$sth_node->execute( $p->{'uri'} );
 	my $tbl = $sth_node->fetchall_arrayref({});
 	$sth_node->finish; # The fetchall should finish the sth implicitly
+
+	# TODO: Handle the case with more than one hit!
+
 	foreach my $r ( @$tbl )
 	{
+	    debug "Changing SOLID to 1 for $node->[URISTR] ".
+	      "IDS $node->[IDS]\n", 3;
+	    $node->[SOLID] = 1; # Resource found in db
+	    my $types = [];
+
 	    # TODO: Go through all the varables
 
 	    # iscontainer
@@ -445,23 +423,31 @@ sub init_types
 	    # label  (there can be only one!)
 	    if( $r->{'label'} )
 	    {
-		if( $self->[NODE][LABEL] )
+		if( $node->[LABEL] )
 		{
-		    $self->[NODE][LABEL] .= " /  $r->{'label'}";
+		    $node->[LABEL] .= " /  $r->{'label'}";
 		}
 		else
 		{
-		    $self->[NODE][LABEL] = $r->{'label'};
+		    $node->[LABEL] = $r->{'label'};
 		}
 	    }
 
 	    # aliasfor
 
 	    # model
-	    my $model= &_get_node($r->{'model'}, $self, $i);
-	    $self->[NODE][MODEL]{$model->[NODE][ID]} = $model;
+	    my $model_res = &_get_node($r->{'model'}, $self, $i);
+	    my $model = $model_res->[NODE];
+	    $self->[NODE][MODEL] = $model;
+	    if( $DEBUG )
+	    {
+		unless( $model_res->is_a( NS_LS.'#Model' ) )
+		{
+		    die "The model is not a model";
+		}
+	    }
 
-	    # pred distr subj obj fact
+	    # pred distr subj obj
 	    if( my $r_pred = $r->{'pred'} )
 	    {
 		push @$types, NS_RDF.'Statement';
@@ -469,58 +455,30 @@ sub init_types
 
 	    # member
 
-	    # updated readonly agent source
-	    if( my $r_updated = $r->{'updated'} )
-	    {
-		push @$types, NS_LS.'#Model';
-
-		my $lit_uristr = $self->[NODE][URISTR]."#updated";
-		$self->declare_add_dynamic_literal(NS_LS.'updated',
-						   \$r_updated,
-						   $lit_uristr,
-						   undef,
-						   $model,
-						   );
-
-
-	    # TODO: Change this to be more RDF style!
-		if(0) #if( defined $r->{'readonly'} )
-		{
-		    my $p_readonly = $self->get(NS_LS.'readonly');
-		    if( ($r->{'readonly'} eq $true) or ($r->{'readonly'} eq $false) )
-		    {
-			my $bool = $r->{'readonly'}; # Copy the value
-
-			# TODO: Change this
-			$self->declare_add_static_literal($p_readonly,
-							  \$bool,
-							  );
-		    }
-		    else
-		    {
-			die "Malformed value ($r->{'readonly'})";
-		    }
-		}
-
-		# agent
-		# source
-	    }
-
 	    # isliteral, lang, value, blob
 	    if( $r->{'isliteral'} eq $true )
 	    {
 		debug "..Literal: $self->[NODE][URISTR]\n", 2;
 		if( $r->{'value'} )
 		{
-		    $self->[NODE][VALUE] = \ ($r->{'value'});
+		    # Rewrite from $r->{'value'}
+		    $self->[NODE][VALUE] = \${$r}{'value'};
 		    push @$types, NS_RDFS.'Literal';
+
+		    if( $DEBUG )
+		    {
+			unless( ref $self->[NODE][VALUE] eq 'SCALAR' )
+			{
+			    die "Value not a string ( $self->[NODE][VALUE] ) ";
+			}
+		    }
 		}
 		else
 		{
 		    die "not implemented";
 		}
 	    }
-	    $self->declare_add_types( $types );
+	    $self->declare_add_types( $types, $model, 1 );
 	}
     }
 
@@ -530,29 +488,27 @@ sub init_types
 	my $sth_types = $dbh->prepare_cached("
               select type.id, string, type, model
               from type, uri
-              where node=? and uri.id=type and fact=TRUE
+              where node=? and uri.id=type
               ");
 
-	$sth_types->execute( $p{'uri'} );
+	$sth_types->execute( $p->{'uri'} );
 	my $tbl = $sth_types->fetchall_arrayref({});
 	$sth_types->finish;
 	foreach my $r ( @$tbl )
 	{
 	    my $type = $self->get($r->{'string'});
-	    my $model = &_get_node( $r->{'model'}, $self, $i );
+	    my $model = &_get_node( $r->{'model'}, $self, $i )->[NODE];
 
 	    # Remember the record ID
 	    $type->[NODE][PRIVATE]{$i->[ID]}{'uri'} = $r->{'type'};
 
 	    # TODO: Maby group the types before creating them
-	    $self->declare_add_types( [$type] );
+	    $self->declare_add_types( [$type], $model, 1 );
 	}
     }
 
     debug "Types for $self->[NODE][URISTR]\n", 1;
     debug $self->types_as_string, 1;
-
-    $self->[NODE][TYPE_ALL] = 1;
 
     return( 1, 3 );
 }
@@ -566,130 +522,42 @@ sub init_rev_types
     # TODO: Get the implicite types from subClassOf. ( Should be
     # handled by declare_add_rev_types )
 
+    # I may the assumption that this initiation does not affect
+    # knowledge of the resource SOLID state.
+
+
     # Look for the URI in the DB.
     #
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
-    $p{'uri'} ||= &_get_id($self, $i);
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
+    $p->{'uri'} ||= &_get_id($self->[NODE], $i);
 
     my $rev_types = [];
 
     my $sth_rev_types = $dbh->prepare_cached("
               select type.id, string, node, model
               from type, uri
-              where type=? and uri.id=node and fact=TRUE
+              where type=? and uri.id=node
               ");
 
-    $sth_rev_types->execute( $p{'uri'} );
+    $sth_rev_types->execute( $p->{'uri'} );
     my $tbl = $sth_rev_types->fetchall_arrayref({});
     $sth_rev_types->finish;
     foreach my $r ( @$tbl )
     {
 	my $rev_type = $self->get($r->{'string'});
-	my $model = &_get_node( $r->{'model'}, $self, $i );
+	my $model = &_get_node( $r->{'model'}, $self, $i )->[NODE];
 
 	# Remember the record ID
 	$rev_type->[NODE][PRIVATE]{$i->[ID]}{'uri'} = $r->{'node'};
 
 	# TODO: Group the rev_types (by model) before creating them
-	$self->declare_add_rev_types( [$rev_type] );
+	$rev_type->declare_add_types( [$self], $model, 1 );
     }
-
-    $self->[NODE][REV_TYPE_ALL] = 1;
 
     return( 1, 3 );
 }
 
-sub create_literal
-{
-    my( $self, $i, $uristr, $lit_str_ref ) = @_;
-
-    if( $uristr )
-    {
-	# NOTE: Copied from create_model
-
-	# This should validate the uri.  If this interface can't
-	# create the URI, it will either return "try next interface"
-	# or "failed", depending on why.
-
-	# For now: Just allow models in the local namespace
-	unless( $uristr =~ /@{[NS_LD]}/o )
-	{
-	    die "Invalid namespace for literal";
-	}
-    }
-
-    # TODO: Make sure that $self is a model
-    #
-    my $model = $self->[WMODEL];
-    my $literal = $self->declare_literal( $lit_str_ref, $uristr );
-
-
-    # NOTE from create_model: _create_node() assumes that the resource
-    # is not yet present in the database . This could be done later.
-    # It would suffice to just get a new record id and put this object
-    # on a stack of objects to be flushed to the DB once we don't have
-    # to wory about the response time.
-    #
-    &_create_node($literal, $i, $model);
-
-    # Return the literal object
-    #
-    return( $literal, 1 );
-}
-
-sub create_model
-{
-    my( $self, $interface, $uri ) = @_;
-    #
-    # We are asked to create a new resource and a new object
-    # representing that resource and a context for the resource
-    # object.  The new resource must have an URI.  The creator must
-    # own the $uri namespace, as statements will be placed in it..
-
-    # If no URI is supplied, one will be generated by the method
-    # create_resource().  In case the URI is supplied, it will
-    # be validated by the appropriate interface.
-
-    if( $uri )
-    {
-
-	# This should validate the uri.  If this interface can't
-	# create the URI, it will either return "try next interface"
-	# or "failed", depending on why.
-
-	# For now: Just allow models in the local namespace
-	my $ns_l = NS_LD;
-	unless( $uri =~ /^$ns_l/ )
-	{
-	    die "Invalid namespace for model";
-	}
-    }
-
-    # The working model of the model will be the model itself.  But
-    # the model of the model will be the working model of it's parent.
-
-    # What is the model of the model?  Is it the parent model
-    # ($self->[MODEL]) or itself ($model) or some default
-    # (NS_LD."/model/system") or maby the interface?  Answer: Its the
-    # parent model.  Commonly the Service object.
-    #
-    my $model = $self->declare_model( $uri );
-    $model->[WMODEL] = $model;
-
-
-    # _create_node() assumes that the resource is not yet present in
-    # the database . This could be done later.  It would suffice to
-    # just get a new record id and put this object on a stack of
-    # objects to be flushed to the DB once we don't have to wory about
-    # the response time.
-    #
-    &_create_node($model, $interface, $model);
-
-    # Return the model object
-    #
-    return( $model, 1);
-}
 
 sub remove
 {
@@ -713,9 +581,9 @@ sub remove
                     delete from node
                     where uri = ? and model = ?");
 
-    my $r_model = &_get_id( $self->[WMODEL], $i );
-    my $r_node  = &_get_id( $self,  $i );
-    my %node_p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $r_model = &_get_id( $self->[WMODEL][NODE], $i );
+    my $r_node  = &_get_id( $self->[NODE],  $i );
+    my $node_p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
 
     $sth_type->execute( $r_node, $r_model)
       or confess( $sth_type->errstr );
@@ -733,34 +601,67 @@ sub remove
 
     delete $self->[NODE][PRIVATE]{$i->[ID]};
 
+    # TODO: What happens if the resource is stored in several
+    # interfaces?  When should we set SOLID to false?
+
     return( 1, 3 );
 }
 
 sub store_types
 {
-    my( $self, $i, $types ) = @_;
+    my( $self, $i ) = @_;
     #
     # TODO: Could store duplicate type statements. But only from
-    # diffrent models. Should not store implicit types.  The calling
-    # function should only include the explicit classes.
+    # diffrent models.
+
+    my $node = $self->[NODE];
+
+    debug $self->types_as_string, 2;
+
 
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $p = $node->[PRIVATE]{$i->[ID]} || {};
 
     my $sth = $dbh->prepare_cached("
                    insert into type
-                   (node, type, model, fact)
-                   values (?, ?, ?, true)
+                   (node, type, model)
+                   values (?, ?, ?)
     ");
 
-    my $r_node  = &_get_id($self, $i);
-    my $r_model = &_get_id($self->[WMODEL], $i);
+    my $r_node  = &_get_id($node, $i);
 
-    foreach my $type ( @$types )
+    foreach my $type_id ( keys %{$node->[TYPE]} )
     {
-	my $r_type = &_get_id($type, $i);
-	$sth->execute( $r_node, $r_type, $r_model )
-	    or confess( $sth->errstr );
+	my $type = $self->get_context_by_id( $type_id );
+	my $r_type = &_get_id($type->[NODE], $i);
+
+	debug "..Checking $type->[NODE][URISTR]\n", 2;
+
+	$type->store; # Store the type if necessary
+
+	foreach my $model_id ( keys %{$node->[TYPE]{$type_id}} )
+	{
+	    # TODO: Use _get_id_by_node_id
+	    my $model = $self->get_context_by_id( $model_id )->[NODE];
+	    debug "....Model $model->[URISTR]\n", 2;
+
+	    # Don't store type if it's already solid
+	    if( $node->[TYPE]{$type_id}{$model_id} == 2 )
+	    {
+		my $uri = &id2uri( $type_id );
+		debug "      Already solid: $uri\n", 1;
+		next;
+	    }
+
+	    debug "      Saving type in DB\n", 2;
+
+	    my $r_model = &_get_id($model, $i);
+	    $sth->execute( $r_node, $r_type, $r_model )
+	      or confess( $sth->errstr );
+
+	    # Type is now solid!
+	    $node->[TYPE]{$type_id}{$model_id} = 2;
+	}
     }
 
     # This interface store all the types. Do not continue
@@ -778,14 +679,14 @@ sub remove_types
                    where node=? and type=? and model=?
     ");
 
-    my $r_node  = &_get_id($self, $i);
-    my $r_model = &_get_id($self->[WMODEL], $i);
+    my $r_node  = &_get_id($self->[NODE], $i);
+    my $r_model = &_get_id($self->[WMODEL][NODE], $i);
 
     foreach my $type ( @$types )
     {
-	debug "  t $type->[NODE][URISTR]\n";
+	debug "  t $type->[NODE][URISTR]\n", 2;
 
-	my $r_type = &_get_id($type, $i);
+	my $r_type = &_get_id($type->[NODE], $i);
 	$sth->execute( $r_node, $r_type, $r_model )
 	    or confess( $sth->errstr );
     }
@@ -795,70 +696,96 @@ sub remove_types
 
 sub store_props
 {
-    my( $self, $i, $preds ) = @_;
+    my( $self, $i ) = @_;
     #
     # The supplied preds are a list of pred_uri.  They specify the
     # preds to store.  The arcs are already declared.  Store the arcs
     # matching the WMODEL.  Implicit preds should not be included in
     # the $preds list.  Preds already stored should not be included.
 
-    debug "You are now in $self\n", 1;
-    debug "..Will store ".($#$preds+1)." preds\n", 1;
-
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
+    my $node = $self->[NODE];
 
     my $sth = $dbh->prepare_cached("
                    insert into node
                    (id, uri, iscontainer, isprefix, model,
-                   pred, subj, obj, fact, isliteral)
-                   values (?, ?, false, false, ?, ?, ?, ?, true, false)
+                   pred, subj, obj, isliteral)
+                   values (?, ?, false, false, ?, ?, ?, ?, false)
     ");
 
-    my $r_subj = $p{'uri'} ||= &_get_id($self, $i);
-    my $r_model = &_get_id($self->[WMODEL], $i);
-    my $model_id = $self->[WMODEL][NODE][ID];
+    my $r_subj = $p->{'uri'} ||= &_get_id($node, $i);
+
+    # TODO: Store the subj (like update_node)
 
     if( $DEBUG )
     {
-	my $pred_cnt = keys %{$self->[NODE][REV_SUBJ]};
-	debug "..Resource has $pred_cnt predicates\n", 1;
+	my $pred_cnt = keys %{$node->[REV_SUBJ]};
+#	debug "  *****************************\n", 1;
+	debug "  Resource has $pred_cnt predicates\n", 1;
+
+#	foreach my $obj ( @{$self->arc_obj_list( NS_LS.'#updated' )} )
+#	{
+#	    debug "  u $obj->[NODE][URISTR]\n";
+#	}
     }
 
-    foreach my $pred_uri ( @$preds )
+    foreach my $pred_id ( keys %{$node->[REV_SUBJ]} )
     {
-	my $r_pred = &_get_id($self->get($pred_uri), $i);
-	my $pred_id = &uri2id( $pred_uri );
+	my $pred = $self->get_context_by_id($pred_id);
+	my $r_pred = &_get_id($pred->[NODE], $i);
+
+	$pred->store; # Store the pred if necessary
 
 	if( $DEBUG )
 	{
-	    debug "..Storing $pred_uri ($pred_id)\n", 1;
-	    debug "....".@{$self->[NODE][REV_SUBJ]{$pred_id}}." entries\n", 1;
+	    debug "..Storing $pred->[NODE][URISTR] ($pred_id)\n", 1;
+	    debug "....".@{$node->[REV_SUBJ]{$pred_id}}." entries\n", 1;
 	}
 
-	foreach my $arc_node ( @{$self->[NODE][REV_SUBJ]{$pred_id}} )
+	foreach my $arc_node ( @{$node->[REV_SUBJ]{$pred_id}} )
 	{
-	    # Is this arc defined for the WMODEL?
-	    unless( $arc_node->[MODEL]{$model_id} )
+	    debug "....Checking arc $arc_node->[URISTR]\n", 3;
+	    # Don't store prop is it's already solid
+	    next if $arc_node->[SOLID];
+
+	    if( $DEBUG )
 	    {
-		debug "The arc $arc_node->[URISTR] is not ".
-		  "defined in $self->[WMODEL][NODE][URISTR]", 1;
-		next;
+		if( $arc_node->[OBJ][VALUE] )
+		{
+		    unless( ref($arc_node->[OBJ][VALUE]) eq 'SCALAR')
+		    {
+			confess "Bad value for $arc_node->[OBJ][URISTR] ( ".
+			  ref($arc_node->[OBJ][VALUE])." ne 'SCALAR' )";
+		    }
+		}
 	    }
 
-	    my %pa = %{$arc_node->[PRIVATE]{$i->[ID]}};
+	    my $pa = $arc_node->[PRIVATE]{$i->[ID]} || {};
 
-	    $pa{'id'} ||= &_nextval($dbh);
-	    $pa{'pred'} = $r_pred;
-	    $pa{'subj'} = $r_subj;
-	    $pa{'obj'} ||= &_get_id( $arc_node->[OBJ], $i );
-	    $pa{'uri'} ||= &_get_id( $self->new($arc_node), $i );
+	    $pa->{'id'} ||= &_nextval($dbh);
+	    $pa->{'pred'} = $r_pred;
+	    $pa->{'subj'} = $r_subj;
+	    $pa->{'obj'} ||= &_get_id( $arc_node->[OBJ], $i );
+	    $pa->{'uri'} ||= &_get_id( $arc_node, $i );
+	    $pa->{'model'} ||= &_get_id( $arc_node->[MODEL], $i );
 
-	    $sth->execute( $pa{'id'}, $pa{'uri'}, $r_model,
-			   $r_pred, $r_subj, $pa{'obj'} )
+	    $sth->execute( $pa->{'id'}, $pa->{'uri'}, $pa->{'model'},
+			   $r_pred, $r_subj, $pa->{'obj'} )
 	      or confess( $sth->errstr );
 
-	    debug "..Stored arc $arc_node->[URISTR]\n", 1;
+	    # The arc has been saved.
+	    debug "Changing SOLID to 1 for $arc_node->[URISTR] ".
+	      "IDS $arc_node->[IDS]\n", 3;
+	    $arc_node->[SOLID] = 1;
+
+	    # Instead of $arc->obj
+	    #
+	    my $obj = $self->new($arc_node->[OBJ]);
+	    debug "....Checking obj $obj->[NODE][URISTR]\n", 2;
+	    $obj->store; # Store the obj if necessary
+
+	    debug "....Stored arc $arc_node->[URISTR]\n", 1;
 	}
     }
 
@@ -867,18 +794,73 @@ sub store_props
 }
 
 
-sub update_node
+sub store_node
 {
     my( $self, $i ) = @_;
     #
-    # See _create_node for comments
+    # Store the object in the database
 
+    my $node = $self->[NODE];
+
+    die "Not implemented" if $node->[MULTI];
+
+    # Should we update, create or ignore the node?
+    #
+    # TODO: Handle other special data
+    #
+    if( $node->[PRED] or $node->[VALUE] or
+	  $node->[LABEL] or $node->[MEMBER] )
+    {
+	my $p = $node->[PRIVATE]{$i->[ID]} || {};
+	my $node_exist = $p->{'id'};
+	unless( $node_exist )
+	{
+	    my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
+	    my $sth = $dbh->prepare_cached("
+              select id
+              from node
+              where uri=?
+              ");
+	    $p->{'uri'} ||= &_get_id($self->[NODE], $i);
+	    $sth->execute( $p->{'uri'} );
+	    $node_exist = 1 if $sth->rows;
+	    $sth->finish;
+	}
+
+	if( $node_exist )
+	{
+	    &_update_node($self, $i);
+	}
+	else
+	{
+	    &_create_node($self, $i);
+	}
+    }
+    else
+    {
+	debug "..The node is neither Literal nor arc!\n", 4;
+    }
+
+    # The resource is now stored and SOLID
+    #
+    debug "Changing SOLID to 1 for $node->[URISTR] ".
+      "IDS $node->[IDS]\n", 3;
+    $node->[SOLID] = 1;
+
+    return( 1, 1);
+}
+
+sub _update_node
+{
+    my( $self, $i ) = @_;
     # This only updates the node; not the types or properties.  Mainly
     # used to update literals
 
-    debug "Updateing node $self->[NODE][URISTR]\n", 2;
+    # TODO: What shall we do about multipple models?
 
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+
+    my $p = $self->[NODE][PRIVATE]{$i->[ID]} || {};
+    my %p = %$p;
     my $dbh = $i->[PRIVATE]{$i->[ID]}{'dbh'};
 
 
@@ -893,7 +875,7 @@ sub update_node
                                     and model = ?
                                    ");
 
-    $p{'uri'}         ||= &_get_id( $self, $i) or die;
+    $p{'uri'}         ||= &_get_id( $self->[NODE], $i) or die;
     $p{'iscontainer'} = 'false';
     $p{'isprefix'}    = 'false';
     $p{'label'}       = $self->[NODE][LABEL];
@@ -902,18 +884,21 @@ sub update_node
     $p{'distr'}       = 'false';
     $p{'subj'}        ||= &_get_id( $self->[NODE][SUBJ], $i);
     $p{'obj'}         ||= &_get_id( $self->[NODE][OBJ], $i);
-    $p{'fact'}        = $self->[NODE][FACT]? 'true':'false';
-    $p{'model'}       ||= &_get_id( $self->[WMODEL], $i) or die;
+
+    # TODO: What should the new model be?
+    $p{'model'}       ||= &_get_id( $self->[WMODEL][NODE], $i) or die;
+
     $p{'member'}      ||= &_get_id( $self->[NODE][MEMBER], $i);
-    if( $self->is_a(NS_LS.'#Model') )
-    {
-	$p{'updated'}     = localtime->strftime('%Y-%m-%d %H:%M:%S');
-	$p{'readonly'}    = 'f';
-	$p{'agent'}       ||= &_get_id( $self->[NODE][AGENT], $i);
-	$p{'source'}      ||= &_get_id( $self->[NODE][SOURCE], $i);
-    }
+
+    # TODO: Use isa(literal)
     if( $self->[NODE][VALUE] )
     {
+	if( $DEBUG )
+	{
+	    ref $self->[NODE][VALUE] eq 'SCALAR' or
+	      die "Value not a string";
+	}
+
 	$p{'isliteral'}   = 'true';
 	$p{'lang'}        = undef;
 	if( length(${$self->[NODE][VALUE]}) <= 250 )
@@ -939,25 +924,29 @@ sub update_node
 		   'uri', 'model' )
 	or confess( $sth->errstr );
 
+    $self->[NODE][PRIVATE]{$i->[ID]} = \%p;
+
     return( 1, 3 );
 }
 
 sub _create_node
 {
-    my( $self, $i, $model ) = @_;
+    my( $self, $i ) = @_;
     #
     # Stores the object in the database.  The object does not exist
     # before this. All data gets stored in the supplied $model.
 
-    # TODO: remove $model parameter and use $self->[MODEL]
-
     debug "_create_node $self->[NODE][URISTR]\n", 2;
+
+    my $model = $self->[WMODEL][NODE];
+    my $node = $self->[NODE];
 
     # Interface PRIVATE data. These has to be updated then the
     # corresponding official data change. The dependencies could be
     # handled as they are (will be) in RDF::Cache
     #
-    my %p = %{$self->[NODE][PRIVATE]{$i->[ID]}};
+    my $p = $node->[PRIVATE]{$i->[ID]} || {};
+    my %p = %$p;
 
     debug "Getting DBH for $i->[URISTR] from ".
 	"[PRIVATE]{$i->[ID]}{'dbh'}\n", 3;
@@ -996,32 +985,30 @@ sub _create_node
     # The list below could be shortend if we knew the type of node to
     # create.
     #
-    $p{'uri'}         ||= &_create_uri( $self->[NODE][URISTR], $i) or die;
+    $p{'uri'}         ||= &_create_uri( $node->[URISTR], $i) or die;
     $p{'iscontainer'} = 'false';
     $p{'isprefix'}    = 'false';
-    $p{'label'}       = $self->[NODE][LABEL];
-    $p{'aliasfor'}    ||= &_get_id( $self->[NODE][ALIASFOR], $i);
-    $p{'pred'}        ||= &_get_id( $self->[NODE][PRED], $i);
+    $p{'label'}       = $node->[LABEL];
+    $p{'aliasfor'}    ||= &_get_id( $node->[ALIASFOR], $i);
+    $p{'pred'}        ||= &_get_id( $node->[PRED], $i);
     $p{'distr'}       = 'false';
-    $p{'subj'}        ||= &_get_id( $self->[NODE][SUBJ], $i);
-    $p{'obj'}         ||= &_get_id( $self->[NODE][OBJ], $i);
-    $p{'fact'}        = $self->[NODE][FACT]? 'true':'false';
+    $p{'subj'}        ||= &_get_id( $node->[SUBJ], $i);
+    $p{'obj'}         ||= &_get_id( $node->[OBJ], $i);
     $p{'model'}       ||= &_get_id( $model, $i) or die;
-    $p{'member'}      ||= &_get_id( $self->[NODE][MEMBER], $i);
-    if( $self->is_a(NS_LS.'#Model') )
+    $p{'member'}      ||= &_get_id( $node->[MEMBER], $i);
+    if( $node->[VALUE] )
     {
-	$p{'updated'}     = localtime->strftime('%Y-%m-%d %H:%M:%S');
-	$p{'readonly'}    = 'f';
-	$p{'agent'}       ||= &_get_id( $self->[NODE][AGENT], $i);
-	$p{'source'}      ||= &_get_id( $self->[NODE][SOURCE], $i);
-    }
-    if( $self->[NODE][VALUE] )
-    {
+	if( $DEBUG )
+	{
+	    ref $node->[VALUE] eq 'SCALAR' or
+	      die "Value not a string: ( $node->[VALUE] )";
+	}
+
 	$p{'isliteral'}   = 'true';
 	$p{'lang'}        = undef;
-	if( length(${$self->[NODE][VALUE]}) <= 250 )
+	if( length(${$node->[VALUE]}) <= 250 )
 	{
-	    $p{'value'}       = ${$self->[NODE][VALUE]};
+	    $p{'value'}       = ${$node->[VALUE]};
 	}
 	else
 	{
@@ -1036,7 +1023,9 @@ sub _create_node
     debug ".. id: $p{'id'}\n", 1;
     debug "..uri: $p{'uri'}\n", 1;
 
-#    confess "SQL insert node $self->[NODE][URISTR]\n" if $DEBUG;
+#    confess "SQL insert node $node->[URISTR]\n" if $DEBUG;
+
+    $node->[PRIVATE]{$i->[ID]} = \%p;
 
     $sth->execute( map $p{$_}, @node_fields )
 	or confess( $sth->errstr );
@@ -1081,23 +1070,30 @@ sub _get_node
 sub _get_id
 {
     return undef unless defined $_[0]; # Common case
-    my( $obj, $interface ) = @_;
+    my( $obj_node, $interface ) = @_;
     #
     # The object already exist.  Here we just want to know what id it
     # has in the DB. NB!!! field URI in NODE table.
 
-    debug "_get_id( $obj->[NODE][URISTR]\n", 2;
+    if( $DEBUG )
+    {
+	debug "_get_id( $obj_node->[URISTR] )\n", 2;
+	unless( ref $obj_node eq "RDF::Service::Resource" )
+	{
+	    confess "obj_node $obj_node malformed ";
+	}
+    }
 
     # Has the object a known connection to the DB?
     #
-    my $p = $obj->[NODE][PRIVATE]{$interface->[ID]} || {};
+    my $p = $obj_node->[PRIVATE]{$interface->[ID]} || {};
     if( defined( my $id = $p->{'uri'}) )
     {
 	return $id;
     }
 
 
-    $obj->[NODE][URISTR] or die "No URI supplied ".$obj->to_string;
+    $obj_node->[URISTR] or die "No URI supplied";
 
     # Look for the URI in the DB.
     #
@@ -1107,7 +1103,7 @@ sub _get_id
               select id, refid, refpart, hasalias from uri
               where string=?
               ");
-    $sth->execute( $obj->[NODE][URISTR] );
+    $sth->execute( $obj_node->[URISTR] );
 
     my( $r_id, $r_refid, $r_refpart, $r_hasalias );
     $sth->bind_columns(\$r_id, \$r_refid, \$r_refpart, \$r_hasalias);
@@ -1129,7 +1125,9 @@ sub _get_id
 	# inserted since it would already be in the DB if this interface
 	# handles its storage.
 
-	return &_create_uri( $obj->[NODE][URISTR], $interface );
+	$p->{'uri'} = &_create_uri( $obj_node->[URISTR], $interface );
+	$obj_node->[PRIVATE]{$interface->[ID]} = $p;
+	return $p->{'uri'};
     }
 }
 
